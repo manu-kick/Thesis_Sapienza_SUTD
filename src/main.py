@@ -155,8 +155,7 @@ def train(cfg_dict: DictConfig):
     )
 
     if cfg.mode == "train":
-        trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=(
-            checkpoint_path if cfg.checkpointing.resume else None))
+        trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=(checkpoint_path if cfg.checkpointing.resume else None))
     else:
         trainer.test(
             model_wrapper,
