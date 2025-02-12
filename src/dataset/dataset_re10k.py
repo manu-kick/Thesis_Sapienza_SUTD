@@ -142,7 +142,7 @@ class DatasetRE10k(IterableDataset):
                         scene,
                         extrinsics,
                         intrinsics,
-                    )
+                    ) #
                     # reverse the context
                     # context_indices = torch.flip(context_indices, dims=[0])
                     # print(context_indices)

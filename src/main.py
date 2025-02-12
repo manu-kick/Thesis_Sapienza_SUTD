@@ -47,7 +47,7 @@ def cyan(text: str) -> str:
 )
 def train(cfg_dict: DictConfig):
     cfg = load_typed_root_config(cfg_dict)
-    
+    print(cfg.model.encoder.num_depth_candidates)
     set_cfg(cfg_dict)
 
     # Set up the output directory.

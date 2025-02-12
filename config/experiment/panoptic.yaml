@@ -1,13 +1,13 @@
 # @package _global_
 
 defaults:
-  - override /dataset: re10k
+  - override /dataset: panoptic
   - override /model/encoder: costvolume
   - override /loss: [mse, lpips]
 
 wandb:
   name: panoptic/views2
-  tags: [panoptic, 640x360]
+  tags: [panoptic, 360x640]
 
 data_loader:
   train:
@@ -35,7 +35,7 @@ loss:
     weight: 0.05
 
 dataset: 
-  image_shape: [640, 360]
+  image_shape: [360, 640]
   roots: [datasets/panoptic_torch]
   near: 1.0
   far: 100.0

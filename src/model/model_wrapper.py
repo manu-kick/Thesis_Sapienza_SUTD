@@ -203,6 +203,28 @@ class ModelWrapper(LightningModule):
                 depth_mode=None,
             )
 
+        # ---------------------
+        # Render on the CONTEXT 
+        output_ctx = self.decoder.forward(
+            gaussians,
+            batch["context"]["extrinsics"],
+            batch["context"]["intrinsics"],
+            batch["context"]["near"],
+            batch["context"]["far"],
+            (h, w),
+            depth_mode=None,
+        )
+        
+        (scene,) = batch["scene"]
+        name = get_cfg()["wandb"]["name"]
+        images_prob = output_ctx.color[0] # [v, c, h, w]
+        path = self.test_cfg.output_path / name
+        for index, color in zip(batch["context"]["index"][0], images_prob):
+            save_image(color, path / scene / f"color/ctx_{index:0>6}.png")
+        # ---------------------
+
+        
+
         (scene,) = batch["scene"]
         name = get_cfg()["wandb"]["name"]
         path = self.test_cfg.output_path / name

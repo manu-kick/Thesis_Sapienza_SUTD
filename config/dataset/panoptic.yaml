@@ -1,5 +1,5 @@
 defaults:
-  - view_sampler: arbitrary
+  - view_sampler: evaluation
 
 name: panoptic
 roots: [datasets/panoptic_torch]
