@@ -119,8 +119,10 @@ class DatasetPanoptic(IterableDataset):
                 
             if self.stage == "test":
                 todo_key = list(self.eval_idxs.keys())
-                example = chunk # we have only one example in the chunk for now
-                extrinsics, intrinsics = self.convert_poses(example["cameras"])
+                # we have only one example in the chunk for now
+                # cam_ids[], cameras[], images[], key
+                
+                extrinsics, intrinsics = self.convert_poses(chunk["cameras"])
                 for key in todo_key:
                     # retrieve the example in the chunk using the scene 
                     try:
@@ -138,9 +140,9 @@ class DatasetPanoptic(IterableDataset):
                         continue
                     
                     # Load the images.
-                    context_images = [ example["images"][index.item()] for index in context_indices ]
+                    context_images = [ chunk["images"][index.item()] for index in context_indices ]
                     context_images = self.convert_images(context_images)
-                    target_images = [ example["images"][index.item()] for index in target_indices ]
+                    target_images = [ chunk["images"][index.item()] for index in target_indices ]
                     target_images = self.convert_images(target_images)
                     
                     # Resize the world to make the baseline 1.
