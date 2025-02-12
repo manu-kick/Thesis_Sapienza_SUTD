@@ -85,6 +85,7 @@ class DatasetRE10k(IterableDataset):
                 [path for path in root.iterdir() if path.suffix == ".torch"]
             )
             self.chunks.extend(root_chunks)
+            
         if self.cfg.overfit_to_scene is not None:
             chunk_path = self.index[self.cfg.overfit_to_scene]
             self.chunks = [chunk_path] * len(self.chunks)
@@ -220,7 +221,7 @@ class DatasetRE10k(IterableDataset):
         Float[Tensor, "batch 4 4"],  # extrinsics
         Float[Tensor, "batch 3 3"],  # intrinsics
     ]:
-        b, _ = poses.shape
+        b, _ = poses.shape #143 18
 
         # Convert the intrinsics to a 3x3 normalized K matrix.
         intrinsics = torch.eye(3, dtype=torch.float32)

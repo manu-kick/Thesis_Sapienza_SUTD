@@ -2,23 +2,28 @@ from torch.utils.data import Dataset
 
 from ..misc.step_tracker import StepTracker
 from .dataset_re10k import DatasetRE10k, DatasetRE10kCfg
-# from .dataset_panoptic import DatasetPanoptic, DatasetPanopticCfg
+from .dataset_panoptic import DatasetPanoptic, DatasetPanopticCfg
 from .types import Stage
 from .view_sampler import get_view_sampler
 
 DATASETS: dict[str, Dataset] = {
     "re10k": DatasetRE10k,
+    "panoptic": DatasetPanoptic
 }
 
+DATASET_CONFIGS = {
+    "re10k": DatasetRE10kCfg,
+    "panoptic": DatasetPanopticCfg
+}
 
-DatasetCfg = DatasetRE10kCfg
-
+DatasetCfg = DatasetRE10kCfg | DatasetPanopticCfg
 
 def get_dataset(
-    cfg: DatasetCfg,
+    cfg: DatasetRE10kCfg | DatasetPanopticCfg,
     stage: Stage,
     step_tracker: StepTracker | None,
 ) -> Dataset:
+    DatasetCfg = DATASET_CONFIGS[cfg.name]
     view_sampler = get_view_sampler(
         cfg.view_sampler,
         stage,

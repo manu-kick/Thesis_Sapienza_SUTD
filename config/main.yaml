@@ -1,16 +1,16 @@
-defaults:
-  - dataset:  
-  - optional dataset/view_sampler_dataset_specific_config: ${dataset/view_sampler}_${dataset}
-  - model/encoder: costvolume
-  - model/decoder: splatting_cuda
-  - loss: [mse]
-
 # defaults:
-#   - dataset: panoptic
+#   - dataset: re10k
 #   - optional dataset/view_sampler_dataset_specific_config: ${dataset/view_sampler}_${dataset}
 #   - model/encoder: costvolume
 #   - model/decoder: splatting_cuda
 #   - loss: [mse]
+
+defaults:
+  - dataset: panoptic
+  - optional dataset/view_sampler_dataset_specific_config: ${dataset/view_sampler}_${dataset}
+  - model/encoder: costvolume
+  - model/decoder: splatting_cuda
+  - loss: [mse]
 
 wandb:
   project: mvsplat
@@ -63,7 +63,7 @@ test:
   output_path: outputs/test
   compute_scores: true
   eval_time_skip_steps: 0
-  save_image: false
+  save_image: true
   save_video: false
 
 seed: 111123
