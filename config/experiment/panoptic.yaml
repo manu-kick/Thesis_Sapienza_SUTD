@@ -37,7 +37,7 @@ loss:
 dataset: 
   image_shape: [360, 640]
   roots: [datasets/panoptic_torch]
-  near: 1.0
+  near: 0.01
   far: 100.0
   baseline_scale_bounds: false
   make_baseline_1: false

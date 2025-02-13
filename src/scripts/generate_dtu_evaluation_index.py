@@ -55,9 +55,9 @@ def main(args):
                 torch.eye(4, dtype=torch.float32),
                 "h w -> b h w",
                 b=cameras.shape[0],
-            ).clone()
-            w2c[:, :3] = rearrange(
-                cameras[:, 6:], "b (h w) -> b h w", h=3, w=4)
+            ).clone() # [B, 4, 4]
+            
+            w2c[:, :3] = rearrange(cameras[:, 6:], "b (h w) -> b h w", h=3, w=4) # [B, 3, 4]
             opencv_c2ws = w2c.inverse()  # .unsqueeze(0)
             xyzs = opencv_c2ws[:, :3, -1].unsqueeze(0)  # 1, N, 3
             cameras_dist_matrix = torch.cdist(xyzs, xyzs, p=2)

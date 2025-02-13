@@ -17,14 +17,20 @@ class IndexEntry:
 
 def sorted_test_src_views_fixed(cam2worlds_dict, test_views, train_views):
     """Use fixed source views for testing instead of selecting different src views dynamically."""
-    cam_pos_trains = np.stack([cam2worlds_dict[k].cpu().numpy()[:3, 3] for k in train_views])  # [V, 3], V train views
-    cam_pos_target = np.stack([cam2worlds_dict[k].cpu().numpy()[:3, 3] for k in test_views])  # [N, 3], N test views
+   # Convert cam2worlds_dict tensors into a single stacked tensor
+    cam_pos_trains = torch.stack([cam2worlds_dict[k][:3, 3] for k in train_views])  # [V, 3]
+    cam_pos_target = torch.stack([cam2worlds_dict[k][:3, 3] for k in test_views])  # [N, 3]
 
-    dis = np.sum(np.abs(cam_pos_trains[:, None] - cam_pos_target[None]), axis=(1, 2))  # [V, N]
-    src_idx = np.argsort(dis) # [N, V] sorted nearest neighbors for each test view
+    # Compute absolute differences and sum along spatial dimensions (1 and 2)
+    dis = torch.sum(torch.abs(cam_pos_trains[:, None, :] - cam_pos_target[None, :, :]), dim=-1)  # [V, N]
 
-    # Ensure indices map correctly to train_views
-    src_idx = [train_views[x] for x in src_idx]
+    # Sort distances to get indices of nearest neighbors
+    src_idx = torch.argsort(dis, dim=0)  # [V, N], sorted nearest neighbors for each test view
+
+    # Convert indices into proper mapping for train_views
+    src_idx = [[train_views[i] for i in src_idx[:, j].tolist()] for j in range(src_idx.shape[1])]
+
+
 
     return src_idx  # This is now a list of lists
 
@@ -32,7 +38,7 @@ def sorted_test_src_views_fixed(cam2worlds_dict, test_views, train_views):
 def main(args):
     dataset = 'panoptic'
     SEQUENCE = "basketball"  # Set dataset name explicitly
-    data_dir = os.path.join("datasets",f"{dataset}_torch", SEQUENCE)
+    data_dir = os.path.join("datasets",f"{dataset}_torch")
 
     # Load the test and train torch files
     test_file = os.path.join(data_dir, "basketball_test.torch")
@@ -56,11 +62,15 @@ def main(args):
 
     for cam_id, cam_pose in zip(train_cam_ids, train_scene_data["cameras"]):
         cam2worlds_dict[cam_id] = torch.eye(4, dtype=torch.float32)
-        cam2worlds_dict[cam_id][:3, :] = cam_pose[6:].view(3, 4)
+        cam2worlds_dict[cam_id][:3] = cam_pose[6:].view(3, 4)
+        # Invert the cam2world matrix because we actually have w2c instead of c2w
+        cam2worlds_dict[cam_id] = cam2worlds_dict[cam_id].inverse()
 
     for cam_id, cam_pose in zip(test_cam_ids, test_scene_data["cameras"]):
         cam2worlds_dict[cam_id] = torch.eye(4, dtype=torch.float32)
-        cam2worlds_dict[cam_id][:3, :] = cam_pose[6:].view(3, 4)
+        cam2worlds_dict[cam_id][:3] = cam_pose[6:].view(3, 4)
+        # Invert the cam2world matrix because we actually have w2c instead of c2w
+        cam2worlds_dict[cam_id] = cam2worlds_dict[cam_id].inverse()
 
      # Compute nearest views using preserved camera IDs
 
@@ -71,7 +81,8 @@ def main(args):
 
         for idx, cam_id in enumerate(selected_pts):
             nearest_fixed_views = sorted_test_src_views_fixed(cam2worlds_dict, [cam_id], train_cam_ids)  # Now correctly maps to train_cam_ids
-            contexts = tuple([int(x)for x in nearest_fixed_views[: args.n_contexts]])
+            contexts = tuple(int(x) for x in nearest_fixed_views[0][: args.n_contexts])
+
             targets = (cam_id,)
             index[f"{scene_name}_{cam_id:02d}"] = IndexEntry(
                 context=contexts,

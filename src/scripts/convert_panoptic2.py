@@ -1,3 +1,7 @@
+''' 
+    This differ from the convert panoptic 1 because this gives as output a unique chunck file placing in the same chunk
+    all the test and train cameras
+'''
 import subprocess
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -139,7 +143,8 @@ if __name__ == "__main__":
                 print(f"Warning: Image {image_path} not found. Skipping camera {cam}...")
                 continue
 
-            all_images[cam] = torch.tensor(np.memmap(image_path, dtype="uint8", mode="r"))
+            all_images[cam] = torch.tensor(np.array(np.memmap(image_path, dtype="uint8", mode="r")), dtype=torch.uint8)
+
 
     # Sort all cameras by ID
     sorted_cam_ids = sorted(all_intrinsics.keys())

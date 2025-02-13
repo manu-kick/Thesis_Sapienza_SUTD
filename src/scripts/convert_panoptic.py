@@ -103,7 +103,7 @@ if __name__ == "__main__":
                 print(f"Warning: Image {image_path} not found. Skipping camera {cam}...")
                 continue
 
-            images[cam] = torch.tensor(np.memmap(image_path, dtype="uint8", mode="r"))
+            images[cam] = torch.tensor(np.memmap(image_path, dtype="uint8", mode="r"), dtype=torch.uint8)
 
         # Sort all data by camera ID
         sorted_cam_ids = sorted(intrinsics.keys())

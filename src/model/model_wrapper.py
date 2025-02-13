@@ -41,6 +41,7 @@ from .decoder.decoder import Decoder, DepthRenderingMode
 from .encoder import Encoder
 from .encoder.visualization.encoder_visualizer import EncoderVisualizer
 from PIL import Image
+from ..misc.utilities import save_gaussians
 
 @dataclass
 class OptimizerCfg:
@@ -203,7 +204,7 @@ class ModelWrapper(LightningModule):
                 depth_mode=None,
             )
 
-        # ---------------------
+        # --------------------- TO REMOVE ------------ 
         # Render on the CONTEXT 
         output_ctx = self.decoder.forward(
             gaussians,
@@ -221,9 +222,10 @@ class ModelWrapper(LightningModule):
         path = self.test_cfg.output_path / name
         for index, color in zip(batch["context"]["index"][0], images_prob):
             save_image(color, path / scene / f"color/ctx_{index:0>6}.png")
-        # ---------------------
-
-        
+            
+        # Save Also the predicted gaussian for debugging
+        save_gaussians(gaussians=gaussians, path=path / scene / f"gaussians/ctx_{index:0>6}.json")
+        # ------------------------------------
 
         (scene,) = batch["scene"]
         name = get_cfg()["wandb"]["name"]
