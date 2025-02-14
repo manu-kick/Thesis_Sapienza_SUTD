@@ -196,8 +196,8 @@ class ModelWrapper(LightningModule):
                 deterministic=False,
             )
             
-        if self.refiner is not None:
-            gaussians = self.refiner.forward(batch['refinement'], gaussians, self.global_step)
+        # if self.refiner is not None:
+        #     gaussians = self.refiner.forward(batch['refinement'], gaussians, self.global_step)
             
         with self.benchmarker.time("decoder", num_calls=v):
             output = self.decoder.forward(
@@ -208,6 +208,7 @@ class ModelWrapper(LightningModule):
                 batch["target"]["far"],
                 (h, w),
                 depth_mode=None,
+                use_scale_and_rotation=True,
             )
 
         # --------------------- TO REMOVE ------------ 
@@ -226,8 +227,12 @@ class ModelWrapper(LightningModule):
         name = get_cfg()["wandb"]["name"]
         images_prob = output_ctx.color[0] # [v, c, h, w]
         path = self.test_cfg.output_path / name
+        if self.refiner is not None:
+            file_name = f"ctx_{batch_idx:0>6}_SR.png"
+        else:
+            file_name = f"ctx_{batch_idx:0>6}.png"
         for index, color in zip(batch["context"]["index"][0], images_prob):
-            save_image(color, path / scene / f"color/ctx_{index:0>6}.png")
+            save_image(color, path / scene / f"color/ctx_{file_name}.png")
             
         # Save Also the predicted gaussian for debugging
         save_gaussians(gaussians=gaussians, path=path / scene / f"gaussians/ctx_{index:0>6}.json")
@@ -240,9 +245,9 @@ class ModelWrapper(LightningModule):
         rgb_gt = batch["target"]["image"][0]
 
         # Save images.
-        if self.test_cfg.save_image:
-            for index, color in zip(batch["target"]["index"][0], images_prob):
-                save_image(color, path / scene / f"color/{index:0>6}.png")
+        # if self.test_cfg.save_image:
+        for index, color in zip(batch["target"]["index"][0], images_prob):
+            save_image(color, path / scene / f"color/{index:0>6}.png")
 
         # save video
         if self.test_cfg.save_video:

@@ -9,6 +9,7 @@ from torch import Tensor
 
 from ...geometry.projection import get_fov, homogenize_points
 from ..encoder.costvolume.conversions import depth_to_relative_disparity
+from ..encoder.common.gaussians import build_covariance
 
 
 def get_projection_matrix(
@@ -52,8 +53,11 @@ def render_cuda(
     gaussian_covariances: Float[Tensor, "batch gaussian 3 3"],
     gaussian_sh_coefficients: Float[Tensor, "batch gaussian 3 d_sh"],
     gaussian_opacities: Float[Tensor, "batch gaussian"],
+    gaussian_scales_rotated: Float[Tensor, "batch gaussian 3"] | None = None,
+    gaussian_rotations_rotated: Float[Tensor, "batch gaussian 4"] | None = None,
     scale_invariant: bool = True,
     use_sh: bool = True,
+    use_scale_and_rotation: bool = False,
 ) -> Float[Tensor, "batch 3 height width"]:
     assert use_sh or gaussian_sh_coefficients.shape[-1] == 1
 
@@ -66,6 +70,9 @@ def render_cuda(
         gaussian_means = gaussian_means * scale[:, None, None]
         near = near * scale
         far = far * scale
+        if use_scale_and_rotation:
+            scales_rotated = gaussian_scales_rotated * scale[:, None, None]
+            rotations_rotated = gaussian_rotations_rotated
 
     _, _, _, n = gaussian_sh_coefficients.shape
     degree = isqrt(n) - 1
@@ -77,7 +84,6 @@ def render_cuda(
     fov_x, fov_y = get_fov(intrinsics).unbind(dim=-1)
     tan_fov_x = (0.5 * fov_x).tan()
     tan_fov_y = (0.5 * fov_y).tan()
-
     projection_matrix = get_projection_matrix(near, far, fov_x, fov_y)
     projection_matrix = rearrange(projection_matrix, "b i j -> b j i")
     view_matrix = rearrange(extrinsics.inverse(), "b i j -> b j i")
@@ -108,17 +114,38 @@ def render_cuda(
             debug=False,
         )
         rasterizer = GaussianRasterizer(settings)
+        
+        # Select rasterizer inputs
+        rasterizer_kwargs = {
+            "means3D": gaussian_means[i],
+            "means2D": mean_gradients,
+            "shs": shs[i] if use_sh else None,
+            "colors_precomp": None if use_sh else shs[i, :, 0, :],
+            "opacities": gaussian_opacities[i, ..., None],
+        }
 
-        row, col = torch.triu_indices(3, 3)
+        if use_scale_and_rotation:
+            print("Using scale and rotation")
+            cov3d = build_covariance(scales_rotated[i], rotations_rotated[i])
+            c2w_rotations = extrinsics[i, :3, :3]
+            cov3d = c2w_rotations @ cov3d @ c2w_rotations.transpose(-1, -2)
+            row, col = torch.triu_indices(3, 3)
+            rasterizer_kwargs["cov3D_precomp"] = cov3d[:, row, col]
+        else:
+            row, col = torch.triu_indices(3, 3)  # Extract upper triangular indices
+            rasterizer_kwargs["cov3D_precomp"] = gaussian_covariances[i, :, row, col]
+        
+        image, radii = rasterizer(**rasterizer_kwargs)
 
-        image, radii = rasterizer(
-            means3D=gaussian_means[i],
-            means2D=mean_gradients,
-            shs=shs[i] if use_sh else None,
-            colors_precomp=None if use_sh else shs[i, :, 0, :],
-            opacities=gaussian_opacities[i, ..., None],
-            cov3D_precomp=gaussian_covariances[i, :, row, col],
-        )
+        # image, radii = rasterizer(
+        #     means3D=gaussian_means[i],
+        #     means2D=mean_gradients,
+        #     shs=shs[i] if use_sh else None,
+        #     colors_precomp=None if use_sh else shs[i, :, 0, :],
+        #     opacities=gaussian_opacities[i, ..., None],
+        #     cov3D_precomp=gaussian_covariances[i, :, row, col],
+        # )
+        
         all_images.append(image)
         all_radii.append(radii)
     return torch.stack(all_images)

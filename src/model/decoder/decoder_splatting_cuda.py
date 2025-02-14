@@ -41,6 +41,7 @@ class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):
         far: Float[Tensor, "batch view"],
         image_shape: tuple[int, int],
         depth_mode: DepthRenderingMode | None = None,
+        use_scale_and_rotation: bool = False,
     ) -> DecoderOutput:
         b, v, _, _ = extrinsics.shape
         color = render_cuda(
@@ -54,6 +55,9 @@ class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):
             repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=v),
             repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=v),
             repeat(gaussians.opacities, "b g -> (b v) g", v=v),
+            repeat(gaussians.scales, "b g xyz-> (b v) g xyz", v=v), #NOTE: we dont need the rotated ones
+            repeat(gaussians.rotations, "b g xyzw -> (b v) g xyzw", v=v), #NOTE: we dont need the rotated ones
+            use_scale_and_rotation=use_scale_and_rotation
         )
         color = rearrange(color, "(b v) c h w -> b v c h w", b=b, v=v)
 

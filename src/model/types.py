@@ -10,5 +10,7 @@ class Gaussians:
     covariances: Float[Tensor, "batch gaussian dim dim"]
     harmonics: Float[Tensor, "batch gaussian 3 d_sh"]
     opacities: Float[Tensor, "batch gaussian"]
+    scales: Float[Tensor, "batch gaussian 3"]
+    rotations: Float[Tensor, "batch gaussian 4"]
     scales_rotated: Float[Tensor, "batch gaussian 3"]
     rotations_rotated: Float[Tensor, "batch gaussian 4"]
