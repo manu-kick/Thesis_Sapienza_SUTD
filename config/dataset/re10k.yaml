@@ -1,6 +1,7 @@
 defaults:
   - view_sampler: evaluation
 
+
 name: re10k
 roots: [datasets/re10k]
 make_baseline_1: true
@@ -21,3 +22,15 @@ shuffle_val: true
 test_len: -1
 test_chunk_interval: 1
 test_times_per_scene: 1
+
+refinement: true
+refinement_cfg:
+  name: refinement_bounded
+  min_distance_between_refinement_views: 45
+  max_distance_between_refinement_views: 192
+  min_distance_to_refinement_views: 0
+  warm_up_steps: 150_000
+  initial_min_distance_between_refinement_views: 25
+  initial_max_distance_between_refinement_views: 45
+  num_refinement_views: 4
+  num_steps: 100

@@ -1,18 +1,18 @@
-# defaults:
-#   - dataset: re10k
-#   - optional dataset/view_sampler_dataset_specific_config: ${dataset/view_sampler}_${dataset}
-#   - model/encoder: costvolume
-#   - model/decoder: splatting_cuda
-#   - loss: [mse]
-#   - experiment: re10k
-
 defaults:
-  - dataset: panoptic
+  - dataset: re10k
   - optional dataset/view_sampler_dataset_specific_config: ${dataset/view_sampler}_${dataset}
   - model/encoder: costvolume
   - model/decoder: splatting_cuda
   - loss: [mse]
-  - experiment: panoptic
+  - experiment: re10k
+
+# defaults:
+#   - dataset: panoptic
+#   - optional dataset/view_sampler_dataset_specific_config: ${dataset/view_sampler}_${dataset}
+#   - model/encoder: costvolume
+#   - model/decoder: splatting_cuda
+#   - loss: [mse]
+#   - experiment: panoptic
 
 wandb:
   project: mvsplat
@@ -26,8 +26,11 @@ mode: test
 dataset:
   overfit_to_scene: null
   view_sampler:
-    # index_path: assets/evaluation_index_re10k.json
-    index_path: assets/evaluation_index_basketball_nctx2.json
+    index_path: assets/evaluation_index_re10k.json
+    # index_path: assets/evaluation_index_basketball_nctx2.json
+
+refiner:
+  enabled: true
 
 data_loader:
   # Avoid having to spin up new processes to print out visualizations.

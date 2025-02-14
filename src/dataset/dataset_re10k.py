@@ -19,7 +19,7 @@ from .shims.augmentation_shim import apply_augmentation_shim
 from .shims.crop_shim import apply_crop_shim
 from .types import Stage
 from .view_sampler import ViewSampler
-
+from .view_sampler import get_view_sampler
 
 # DEBUGGER
 import os
@@ -38,17 +38,19 @@ class DatasetRE10kCfg(DatasetCfgCommon):
     test_len: int
     test_chunk_interval: int
     test_times_per_scene: int
+    refinement_cfg: dict
     skip_bad_shape: bool = True
     near: float = -1.0
     far: float = -1.0
     baseline_scale_bounds: bool = True
     shuffle_val: bool = True
-
+    refinement: bool = False
 
 class DatasetRE10k(IterableDataset):
     cfg: DatasetRE10kCfg
     stage: Stage
     view_sampler: ViewSampler
+    refinement_view_sampler: ViewSampler | None
 
     to_tensor: tf.ToTensor
     chunks: list[Path]
@@ -60,6 +62,7 @@ class DatasetRE10k(IterableDataset):
         cfg: DatasetRE10kCfg,
         stage: Stage,
         view_sampler: ViewSampler,
+        refinement_view_sampler: ViewSampler | None = None,
     ) -> None:
         super().__init__()
         self.cfg = cfg
@@ -93,6 +96,9 @@ class DatasetRE10k(IterableDataset):
             # NOTE: hack to skip some chunks in testing during training, but the index
             # is not change, this should not cause any problem except for the display
             self.chunks = self.chunks[:: cfg.test_chunk_interval]
+            
+        if self.cfg.refinement:
+            self.refinement_view_sampler = refinement_view_sampler
 
     def shuffle(self, lst: list) -> list:
         indices = torch.randperm(len(lst))
@@ -114,7 +120,6 @@ class DatasetRE10k(IterableDataset):
             ]
 
         for chunk_path in self.chunks:
-            # print(chunk_path)
             # Load the chunk.
             chunk = torch.load(chunk_path)
 
@@ -137,18 +142,26 @@ class DatasetRE10k(IterableDataset):
                 else:
                     scene = example["key"]
 
+                # Context and target indices.
                 try:
-                    context_indices, target_indices = self.view_sampler.sample(
+                    context_indices, target_indices,  = self.view_sampler.sample(
                         scene,
                         extrinsics,
                         intrinsics,
-                    ) #
-                    # reverse the context
-                    # context_indices = torch.flip(context_indices, dims=[0])
-                    # print(context_indices)
+                    )
                 except ValueError:
                     # Skip because the example doesn't have enough frames.
                     continue
+                
+                # Refinement data selection
+                if self.cfg.refinement:
+                    refinement_indices = self.refinement_view_sampler.sample(
+                        scene,
+                        extrinsics,
+                        intrinsics,
+                    )
+                
+                
 
                 # Skip the example if the field of view is too wide.
                 if (get_fov(intrinsics).rad2deg() > self.cfg.max_fov).any():

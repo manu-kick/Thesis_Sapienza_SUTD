@@ -15,6 +15,7 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers.wandb import WandbLogger
 import sys
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
@@ -33,6 +34,7 @@ with install_import_hook(
     from src.misc.wandb_tools import update_checkpoint_path
     from src.model.decoder import get_decoder
     from src.model.encoder import get_encoder
+    # from src.model.refiner import get_refiner
     from src.model.model_wrapper import ModelWrapper
 
 
@@ -137,6 +139,10 @@ def train(cfg_dict: DictConfig):
         "losses": get_losses(cfg.loss),
         "step_tracker": step_tracker,
     }
+    
+    # if cfg.refiner.enabled:
+    #     refiner = get_refiner(cfg.model.refiner)
+        
     if cfg.mode == "train" and checkpoint_path is not None and not cfg.checkpointing.resume:
         # Just load model weights, without optimizer states
         # e.g., fine-tune from the released weights on other datasets
