@@ -18,9 +18,6 @@ class Gaussians:
     rotations: Float[Tensor, "*batch 4"]
     harmonics: Float[Tensor, "*batch 3 _"]
     opacities: Float[Tensor, " *batch"]
-    scales_rotated: Float[Tensor, "*batch 3"]
-    rotations_rotated: Float[Tensor, "*batch 4"]
-
 
 @dataclass
 class GaussianAdapterCfg:
@@ -107,10 +104,6 @@ class GaussianAdapter(nn.Module):
             # exporting Gaussians to ply files. This needs to be fixed...
             scales=scales,
             rotations=rotations.broadcast_to((*scales.shape[:-1], 4)),
-            
-            # -----> return scale a rotation rotated to world space
-            scales_rotated=scales_rotated,
-            rotations_rotated=rotations_rotated,
         )
 
     def get_scale_multiplier(

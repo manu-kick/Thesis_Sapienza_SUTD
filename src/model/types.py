@@ -12,5 +12,3 @@ class Gaussians:
     opacities: Float[Tensor, "batch gaussian"]
     scales: Float[Tensor, "batch gaussian 3"]
     rotations: Float[Tensor, "batch gaussian 4"]
-    scales_rotated: Float[Tensor, "batch gaussian 3"]
-    rotations_rotated: Float[Tensor, "batch gaussian 4"]

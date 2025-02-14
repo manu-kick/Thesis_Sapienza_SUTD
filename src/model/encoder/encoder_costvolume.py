@@ -250,12 +250,6 @@ class EncoderCostVolume(Encoder[EncoderCostVolumeCfg]):
             ),
             rearrange( gaussians.rotations,
                 "b v r srf spp xyzw -> b (v r srf spp) xyzw" 
-            ),
-            rearrange(gaussians.scales_rotated,
-                "b v r srf spp xyz -> b (v r srf spp) xyz" 
-            ),
-            rearrange( gaussians.rotations_rotated,
-                "b v r srf spp xyzw -> b (v r srf spp) xyzw" 
             )
         )
 

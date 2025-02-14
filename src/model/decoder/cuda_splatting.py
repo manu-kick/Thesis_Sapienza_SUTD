@@ -53,8 +53,8 @@ def render_cuda(
     gaussian_covariances: Float[Tensor, "batch gaussian 3 3"],
     gaussian_sh_coefficients: Float[Tensor, "batch gaussian 3 d_sh"],
     gaussian_opacities: Float[Tensor, "batch gaussian"],
-    gaussian_scales_rotated: Float[Tensor, "batch gaussian 3"] | None = None,
-    gaussian_rotations_rotated: Float[Tensor, "batch gaussian 4"] | None = None,
+    gaussian_scales: Float[Tensor, "batch gaussian 3"] | None = None,
+    gaussian_rotations: Float[Tensor, "batch gaussian 4"] | None = None,
     scale_invariant: bool = True,
     use_sh: bool = True,
     use_scale_and_rotation: bool = False,
@@ -71,8 +71,8 @@ def render_cuda(
         near = near * scale
         far = far * scale
         if use_scale_and_rotation:
-            scales_rotated = gaussian_scales_rotated * scale[:, None, None]
-            rotations_rotated = gaussian_rotations_rotated
+            scales_rotated = gaussian_scales * scale[:, None, None]
+            rotations_rotated = gaussian_rotations
 
     _, _, _, n = gaussian_sh_coefficients.shape
     degree = isqrt(n) - 1
@@ -115,7 +115,6 @@ def render_cuda(
         )
         rasterizer = GaussianRasterizer(settings)
         
-        # Select rasterizer inputs
         rasterizer_kwargs = {
             "means3D": gaussian_means[i],
             "means2D": mean_gradients,
@@ -125,7 +124,6 @@ def render_cuda(
         }
 
         if use_scale_and_rotation:
-            print("Using scale and rotation")
             cov3d = build_covariance(scales_rotated[i], rotations_rotated[i])
             c2w_rotations = extrinsics[i, :3, :3]
             cov3d = c2w_rotations @ cov3d @ c2w_rotations.transpose(-1, -2)
@@ -136,16 +134,7 @@ def render_cuda(
             rasterizer_kwargs["cov3D_precomp"] = gaussian_covariances[i, :, row, col]
         
         image, radii = rasterizer(**rasterizer_kwargs)
-
-        # image, radii = rasterizer(
-        #     means3D=gaussian_means[i],
-        #     means2D=mean_gradients,
-        #     shs=shs[i] if use_sh else None,
-        #     colors_precomp=None if use_sh else shs[i, :, 0, :],
-        #     opacities=gaussian_opacities[i, ..., None],
-        #     cov3D_precomp=gaussian_covariances[i, :, row, col],
-        # )
-        
+          
         all_images.append(image)
         all_radii.append(radii)
     return torch.stack(all_images)

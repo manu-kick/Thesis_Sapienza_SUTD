@@ -232,7 +232,7 @@ class ModelWrapper(LightningModule):
         else:
             file_name = f"ctx_{batch_idx:0>6}.png"
         for index, color in zip(batch["context"]["index"][0], images_prob):
-            save_image(color, path / scene / f"color/ctx_{file_name}.png")
+            save_image(color, path / scene / f"color/{file_name}.png")
             
         # Save Also the predicted gaussian for debugging
         save_gaussians(gaussians=gaussians, path=path / scene / f"gaussians/ctx_{index:0>6}.json")
