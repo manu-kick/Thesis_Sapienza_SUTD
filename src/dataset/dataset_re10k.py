@@ -158,29 +158,38 @@ class DatasetRE10k(IterableDataset):
                     refinement_indices = self.refinement_view_sampler.sample(
                         scene,
                         extrinsics,
-                        intrinsics,
+                        target_indices,
                     )
-                
-                
-
+                    
+                    refinement_intr = []
+                    refinement_extr = []
+                    refinement_img = []
+                    for i in range(refinement_indices.shape[0]):
+                        for j in range(refinement_indices.shape[1]):
+                            refinement_intr.append(intrinsics[refinement_indices[i,j]])
+                            refinement_extr.append(extrinsics[refinement_indices[i,j]])
+                            refinement_img.append(example["images"][refinement_indices[i,j]])
+                    
+                    refinement_intrinsics = torch.stack(refinement_intr) # (targets, refinements) ,3,3
+                    refinement_extrinsics = torch.stack(refinement_extr)
+                    refinement_images = self.convert_images(refinement_img)
+                    
                 # Skip the example if the field of view is too wide.
                 if (get_fov(intrinsics).rad2deg() > self.cfg.max_fov).any():
                     continue
 
                 # Load the images.
-                context_images = [
-                    example["images"][index.item()] for index in context_indices
-                ]
+                context_images = [example["images"][index.item()] for index in context_indices]
                 context_images = self.convert_images(context_images)
-                target_images = [
-                    example["images"][index.item()] for index in target_indices
-                ]
+                target_images = [example["images"][index.item()] for index in target_indices]
                 target_images = self.convert_images(target_images)
-
+                
+               
                 # Skip the example if the images don't have the right shape.
                 context_image_invalid = context_images.shape[1:] != (3, 360, 640)
                 target_image_invalid = target_images.shape[1:] != (3, 360, 640)
-                if self.cfg.skip_bad_shape and (context_image_invalid or target_image_invalid):
+                refinement_images_invalid = refinement_images.shape[1:] != (3, 360, 640) if self.cfg.refinement else False
+                if self.cfg.skip_bad_shape and (context_image_invalid or target_image_invalid or refinement_images_invalid):
                     print(
                         f"Skipped bad example {example['key']}. Context shape was "
                         f"{context_images.shape} and target shape was "
@@ -221,6 +230,12 @@ class DatasetRE10k(IterableDataset):
                         "far": self.get_bound("far", len(target_indices)) / nf_scale,
                         "index": target_indices,
                     },
+                    "refinement": {
+                        "extrinsics": refinement_intrinsics,
+                        "intrinsics": refinement_extrinsics,
+                        "image": refinement_images,
+                        "index": refinement_indices,
+                    } if self.cfg.refinement else None,
                     "scene": scene,
                 }
                 if self.stage == "train" and self.cfg.augment:

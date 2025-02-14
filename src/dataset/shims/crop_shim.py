@@ -9,9 +9,9 @@ from ..types import AnyExample, AnyViews
 
 
 def rescale(
-    image: Float[Tensor, "3 h_in w_in"],
-    shape: tuple[int, int],
-) -> Float[Tensor, "3 h_out w_out"]:
+    image,
+    shape,
+):
     h, w = shape
     image_new = (image * 255).clip(min=0, max=255).type(torch.uint8)
     image_new = rearrange(image_new, "c h w -> h w c").detach().cpu().numpy()
@@ -23,13 +23,10 @@ def rescale(
 
 
 def center_crop(
-    images: Float[Tensor, "*#batch c h w"],
-    intrinsics: Float[Tensor, "*#batch 3 3"],
-    shape: tuple[int, int],
-) -> tuple[
-    Float[Tensor, "*#batch c h_out w_out"],  # updated images
-    Float[Tensor, "*#batch 3 3"],  # updated intrinsics
-]:
+    images,
+    intrinsics,
+    shape,
+):
     *_, h_in, w_in = images.shape
     h_out, w_out = shape
 
@@ -49,13 +46,10 @@ def center_crop(
 
 
 def rescale_and_crop(
-    images: Float[Tensor, "*#batch c h w"],
-    intrinsics: Float[Tensor, "*#batch 3 3"],
-    shape: tuple[int, int],
-) -> tuple[
-    Float[Tensor, "*#batch c h_out w_out"],  # updated images
-    Float[Tensor, "*#batch 3 3"],  # updated intrinsics
-]:
+    images,
+    intrinsics,
+    shape,
+):
     *_, h_in, w_in = images.shape
     h_out, w_out = shape
     assert h_out <= h_in and w_out <= w_in
@@ -85,9 +79,15 @@ def apply_crop_shim_to_views(views: AnyViews, shape: tuple[int, int]) -> AnyView
 
 
 def apply_crop_shim(example: AnyExample, shape: tuple[int, int]) -> AnyExample:
-    """Crop images in the example."""
-    return {
+    """Apply crop shim to context, target, and optionally refinement data."""
+    cropped_example = {
         **example,
         "context": apply_crop_shim_to_views(example["context"], shape),
         "target": apply_crop_shim_to_views(example["target"], shape),
     }
+
+    # If refinement exists, apply the same transformations to refinement views
+    if example.get("refinement") is not None:
+        cropped_example["refinement"] = apply_crop_shim_to_views(example["refinement"], shape)
+
+    return cropped_example

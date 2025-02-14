@@ -245,6 +245,7 @@ class EncoderCostVolume(Encoder[EncoderCostVolumeCfg]):
                 opacity_multiplier * gaussians.opacities,
                 "b v r srf spp -> b (v r srf spp)",
             ),
+            #return scale a rotation 
         )
 
     def get_data_shim(self) -> DataShim:

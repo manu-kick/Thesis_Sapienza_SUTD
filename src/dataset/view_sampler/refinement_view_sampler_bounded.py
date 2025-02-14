@@ -30,84 +30,33 @@ class RefinementViewSamplerBounded(ViewSampler[RefinementViewSamplerBoundedCfg])
         self,
         scene: str,
         extrinsics: Float[Tensor, "view 4 4"],
-        intrinsics: Float[Tensor, "view 3 3"],
+        target_indices: Int64[Tensor, "targets"],
         device: torch.device = torch.device("cpu"),
-    ) -> Int64[Tensor, " refinement_view"]: # indices for refinement views
+    ): # indices for refinement views
         num_views, _, _ = extrinsics.shape
+        extrinsics = extrinsics.inverse()
+        extrinsics_inv = extrinsics.inverse()  # Convert world-to-camera to camera-to-world
+        cam_positions = extrinsics_inv[:, :3, 3]  # Extract camera positions [num_views, 3]
 
-        # Compute the refinement view spacing based on the current global step.
         if self.stage == "test":
-            # When testing, always use the full gap.
-            max_gap = self.cfg.max_distance_between_refinement_views
-            min_gap = self.cfg.max_distance_between_refinement_views
-        elif self.cfg.warm_up_steps > 0:
-            max_gap = self.schedule(
-                self.cfg.initial_max_distance_between_refinement_views,
-                self.cfg.max_distance_between_refinement_views,
-            )
-            min_gap = self.schedule(
-                self.cfg.initial_min_distance_between_refinement_views,
-                self.cfg.min_distance_between_refinement_views,
-            )
+            # Compute pairwise distances between camera positions
+            distances = torch.cdist(cam_positions, cam_positions, p=2)  # Euclidean distance [num_views, num_views]
+
+            refinement_indices = []
+            for i in target_indices.tolist():
+                sorted_indices = torch.argsort(distances[i])  # Sort views by closest distance
+                closest_views = sorted_indices[1:self.cfg.num_refinement_views + 1]  # Skip self and take N closest
+                
+                refinement_indices.append(closest_views)
+
+            refinement_indices = torch.stack(refinement_indices)  # Convert to tensor
+
+            return refinement_indices.to(device)
+
         else:
-            max_gap = self.cfg.max_distance_between_refinement_views
-            min_gap = self.cfg.min_distance_between_refinement_views
+            raise NotImplementedError("Training and validation are not implemented yet")
 
-        # Pick the gap between the refinement views.
-        # NOTE: we keep the bug untouched to follow initial pixelsplat cfgs
-        if not self.cameras_are_circular:
-            max_gap = min(num_views - 1, min_gap)
-        min_gap = max(2 * self.cfg.min_distance_to_refinement_views, min_gap)
-        if max_gap < min_gap:
-            raise ValueError("Example does not have enough frames!")
-        refinement_gap = torch.randint(
-            min_gap,
-            max_gap + 1,
-            size=tuple(),
-            device=device,
-        ).item()
-
-        # Pick the left and right refinement indices.
-        index_refinement_left = torch.randint(
-            num_views if self.cameras_are_circular else num_views - refinement_gap,
-            size=tuple(),
-            device=device,
-        ).item()
-        if self.stage == "test":
-            index_refinement_left = index_refinement_left * 0
-        index_refinement_right = index_refinement_left + refinement_gap
-
-        if self.is_overfitting:
-            index_refinement_left *= 0
-            index_refinement_right *= 0
-            index_refinement_right += max_gap
-
-        # Pick the target view indices.
-        if self.stage == "test":
-            # When testing, pick all.
-            index_target = torch.arange(
-                index_refinement_left,
-                index_refinement_right + 1,
-                device=device,
-            )
-        else:
-            # When training or validating (visualizing), pick at random.
-            index_target = torch.randint(
-                index_refinement_left + self.cfg.min_distance_to_refinement_views,
-                index_refinement_right + 1 - self.cfg.min_distance_to_refinement_views,
-                size=(self.cfg.num_target_views,),
-                device=device,
-            )
-
-        # Apply modulo for circular datasets.
-        if self.cameras_are_circular:
-            index_target %= num_views
-            index_refinement_right %= num_views
-
-        return (
-            torch.tensor((index_refinement_left, index_refinement_right)),
-            index_target,
-        )
+    
 
     @property
     def num_refinment_views(self) -> int:

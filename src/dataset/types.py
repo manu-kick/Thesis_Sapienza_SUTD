@@ -1,4 +1,4 @@
-from typing import Callable, Literal, TypedDict
+from typing import Callable, Literal, TypedDict, Optional
 
 from jaxtyping import Float, Int64
 from torch import Tensor
@@ -25,6 +25,7 @@ class BatchedViews(TypedDict, total=False):
 class BatchedExample(TypedDict, total=False):
     target: BatchedViews
     context: BatchedViews
+    refinement: Optional[BatchedViews]  # Now optional
     scene: list[str]
 
 
@@ -40,6 +41,7 @@ class UnbatchedViews(TypedDict, total=False):
 class UnbatchedExample(TypedDict, total=False):
     target: UnbatchedViews
     context: UnbatchedViews
+    refinement: Optional[UnbatchedViews]  # Now optional
     scene: str
 
 

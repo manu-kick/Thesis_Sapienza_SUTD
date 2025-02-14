@@ -93,6 +93,8 @@ class GaussianAdapter(nn.Module):
             # exporting Gaussians to ply files. This needs to be fixed...
             scales=scales,
             rotations=rotations.broadcast_to((*scales.shape[:-1], 4)),
+            
+            #return scale a rotation rotated to world space
         )
 
     def get_scale_multiplier(
