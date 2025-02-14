@@ -12,13 +12,6 @@ from ..view_sampler import ViewSampler
 class RefinementViewSamplerBoundedCfg:
     name: Literal["refinement_bounded"]
     num_refinement_views: int
-    min_distance_between_refinement_views: int
-    max_distance_between_refinement_views: int
-    min_distance_to_refinement_views: int
-    warm_up_steps: int
-    initial_min_distance_between_refinement_views: int
-    initial_max_distance_between_refinement_views: int
-    num_steps: int
 
 
 class RefinementViewSamplerBounded(ViewSampler[RefinementViewSamplerBoundedCfg]):

@@ -34,7 +34,7 @@ with install_import_hook(
     from src.misc.wandb_tools import update_checkpoint_path
     from src.model.decoder import get_decoder
     from src.model.encoder import get_encoder
-    # from src.model.refiner import get_refiner
+    from src.model.refiner import get_refiner
     from src.model.model_wrapper import ModelWrapper
 
 
@@ -127,21 +127,28 @@ def train(cfg_dict: DictConfig):
 
     
     encoder, encoder_visualizer = get_encoder(cfg.model.encoder)
+    decoder = get_decoder(cfg.model.decoder, cfg.dataset)
+    losses = get_losses(cfg.loss)
 
-
+    if cfg.enable_refinement:
+        refiner_kwargs = {
+            "name": "refiner",
+            "decoder": decoder,
+            "losses": losses
+        }
+        refiner = get_refiner(**refiner_kwargs)
+        
     model_kwargs = {
         "optimizer_cfg": cfg.optimizer,
         "test_cfg": cfg.test,
         "train_cfg": cfg.train,
         "encoder": encoder,
         "encoder_visualizer": encoder_visualizer,
-        "decoder": get_decoder(cfg.model.decoder, cfg.dataset),
-        "losses": get_losses(cfg.loss),
+        "decoder": decoder,
+        "losses": losses,
+        "refiner": refiner if cfg.enable_refinement else None,
         "step_tracker": step_tracker,
     }
-    
-    # if cfg.refiner.enabled:
-    #     refiner = get_refiner(cfg.model.refiner)
         
     if cfg.mode == "train" and checkpoint_path is not None and not cfg.checkpointing.resume:
         # Just load model weights, without optimizer states

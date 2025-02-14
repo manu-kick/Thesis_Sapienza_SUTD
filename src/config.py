@@ -9,6 +9,7 @@ from .dataset.data_module import DataLoaderCfg, DatasetCfg
 from .loss import LossCfgWrapper
 from .model.decoder import DecoderCfg
 from .model.encoder import EncoderCfg
+from .model.refiner import RefinerCfg
 from .model.model_wrapper import OptimizerCfg, TestCfg, TrainCfg
 
 
@@ -25,6 +26,7 @@ class CheckpointingCfg:
 class ModelCfg:
     decoder: DecoderCfg
     encoder: EncoderCfg
+    refiner: RefinerCfg
 
 
 @dataclass
@@ -34,6 +36,8 @@ class TrainerCfg:
     gradient_clip_val: int | float | None
     num_sanity_val_steps: int
     num_nodes: Optional[int] = 1
+    
+
 
 
 @dataclass
@@ -49,6 +53,7 @@ class RootCfg:
     loss: list[LossCfgWrapper]
     test: TestCfg
     train: TrainCfg
+    enable_refinement: bool
     seed: int
 
 

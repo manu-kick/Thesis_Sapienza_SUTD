@@ -13,6 +13,7 @@ from typing import Literal
 @dataclass
 class RefinerCfg:
     name: Literal["refiner"]
+    num_steps: int
     
 lrs_HPO = { #coming from HPO
     'means': 0.000029975,
@@ -23,7 +24,7 @@ lrs_HPO = { #coming from HPO
 }
 
 class Refiner(nn.Module):
-    def __init__(self, cfg, decoder, losses, lrs: dict = lrs_HPO):
+    def __init__(self, cfg , decoder, losses, lrs: dict = lrs_HPO):
         super(Refiner, self).__init__()
         self.cfg = cfg
         self.decoder = decoder
@@ -68,3 +69,32 @@ class Refiner(nn.Module):
         # You could also set a global default lr and override it per group:
         # return torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
         return torch.optim.Adam(param_groups, eps=1e-15)
+    
+    def forward(self, batch, gaussians, global_step):
+        self.initialize_parameters(gaussians)
+        self.optimizer = self.get_optimizer()
+        
+        for i in tqdm(range(self.cfg.num_steps), desc="Refinement Progress"):
+            # Update `gaussians` parameters from learnable parameters
+            gaussians.means = self.means
+            gaussians.harmonics = self.harmonics
+            gaussians.opacities = self.opacities
+            gaussians.scales = self.scales
+            gaussians.rotations = self.rotations
+            
+            # Batch contains a set of extrinsics, intrinsics, near, far and image
+            output = self.decoder.forward(
+                gaussians,
+                batch['extrinsics'],
+                batch['intrinsics'],
+                batch['near'],
+                batch['far'],
+                (batch['image'].shape[-2], batch['image'].shape[-1]),
+                batch_size=batch['image'].shape[0],
+                views=batch['image'].shape[1],
+                depth_mode=None,
+            )
+            
+            print("Output shape: ", output.shape)
+            
+        return 0 # for now

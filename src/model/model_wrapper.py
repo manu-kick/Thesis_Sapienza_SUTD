@@ -98,6 +98,7 @@ class ModelWrapper(LightningModule):
         encoder_visualizer: Optional[EncoderVisualizer],
         decoder: Decoder,
         losses: list[Loss],
+        refiner: Optional[nn.Module],
         step_tracker: StepTracker | None,
     ) -> None:
         super().__init__()
@@ -110,6 +111,7 @@ class ModelWrapper(LightningModule):
         self.encoder = encoder
         self.encoder_visualizer = encoder_visualizer
         self.decoder = decoder
+        self.refiner = refiner
         self.data_shim = get_data_shim(self.encoder)
         self.losses = nn.ModuleList(losses)
 
@@ -193,6 +195,10 @@ class ModelWrapper(LightningModule):
                 self.global_step,
                 deterministic=False,
             )
+            
+        if self.refiner is not None:
+            gaussians = self.refiner.forward(batch['refinement'], gaussians, self.global_step)
+            
         with self.benchmarker.time("decoder", num_calls=v):
             output = self.decoder.forward(
                 gaussians,

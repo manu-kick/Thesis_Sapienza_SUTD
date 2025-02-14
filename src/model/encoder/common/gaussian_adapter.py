@@ -7,7 +7,7 @@ from torch import Tensor, nn
 
 from ....geometry.projection import get_world_rays
 from ....misc.sh_rotation import rotate_sh
-from .gaussians import build_covariance
+from .gaussians import build_covariance, matrix_to_quaternion, quaternion_to_matrix
 
 
 @dataclass
@@ -18,6 +18,8 @@ class Gaussians:
     rotations: Float[Tensor, "*batch 4"]
     harmonics: Float[Tensor, "*batch 3 _"]
     opacities: Float[Tensor, " *batch"]
+    scales_rotated: Float[Tensor, "*batch 3"]
+    rotations_rotated: Float[Tensor, "*batch 4"]
 
 
 @dataclass
@@ -83,6 +85,18 @@ class GaussianAdapter(nn.Module):
         # Compute Gaussian means.
         origins, directions = get_world_rays(coordinates, extrinsics, intrinsics)
         means = origins + directions * depths[..., None]
+        
+        
+        # ----------------------------------------------------------------------
+        #        Derive "rotations_rotated" & "scales_rotated" in world space
+        # ----------------------------------------------------------------------
+        rotations_rotated = c2w_rotations @ quaternion_to_matrix(rotations)
+        rotations_rotated = matrix_to_quaternion(rotations_rotated.squeeze(-2).squeeze(-2)) # TODO : This function might be wrong becuse the convention of the quaternion is different (wxyz is used in this function)
+        # TODO: if to be converted quaternions_xyzw = quaternions[..., [1, 2, 3, 0]]  # Move w to the end
+        scales_rotated = torch.matmul(c2w_rotations,scales.unsqueeze(-1))
+        scales_rotated = scales_rotated.squeeze(-1)
+        # ----------------------------------------------------------------------
+        
 
         return Gaussians(
             means=means,
@@ -94,7 +108,9 @@ class GaussianAdapter(nn.Module):
             scales=scales,
             rotations=rotations.broadcast_to((*scales.shape[:-1], 4)),
             
-            #return scale a rotation rotated to world space
+            # -----> return scale a rotation rotated to world space
+            scales_rotated=scales_rotated,
+            rotations_rotated=rotations_rotated,
         )
 
     def get_scale_multiplier(

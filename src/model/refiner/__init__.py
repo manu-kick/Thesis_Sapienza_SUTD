@@ -7,5 +7,8 @@ REFINERS = {
 }
 Refiner_Cfg = RefinerCfg
 
-def get_decoder(refiner_cfg: Refiner_Cfg, dataset_cfg: DatasetCfg):
-    return REFINERS[refiner_cfg.name](refiner_cfg, dataset_cfg)
+def get_refiner(name, decoder, losses) -> Refiner:
+    if name == "refiner":
+        return Refiner(Refiner_Cfg, decoder, losses)
+    else:
+        NotImplementedError(f"Refiner {name} not implemented.")
