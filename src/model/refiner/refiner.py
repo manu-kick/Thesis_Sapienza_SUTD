@@ -35,8 +35,8 @@ class Refiner(nn.Module):
         self.means = nn.Parameter(gaussians.means.clone().detach(), requires_grad=True)
         self.harmonics = nn.Parameter(gaussians.harmonics.clone().detach(), requires_grad=True)
         self.opacities = nn.Parameter(gaussians.opacities.clone().detach(), requires_grad=True)
-        self.scales = nn.Parameter(gaussians.scales.clone().detach(), requires_grad=True) 
-        self.rotations = nn.Parameter(gaussians.rotations.clone().detach(), requires_grad=True) 
+        self.scales = nn.Parameter(gaussians.scales_rotated.clone().detach(), requires_grad=True) 
+        self.rotations = nn.Parameter(gaussians.rotations_rotated.clone().detach(), requires_grad=True) 
             
     def get_optimizer(self):
         param_groups = [
