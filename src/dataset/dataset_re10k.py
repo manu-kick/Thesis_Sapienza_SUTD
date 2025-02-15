@@ -170,7 +170,7 @@ class DatasetRE10k(IterableDataset):
                             refinement_extr.append(extrinsics[refinement_indices[i,j]])
                             refinement_img.append(example["images"][refinement_indices[i,j]])
                     
-                    refinement_intrinsics = torch.stack(refinement_intr) # (targets, refinements) ,3,3
+                    refinement_intrinsics = torch.stack(refinement_intr) 
                     refinement_extrinsics = torch.stack(refinement_extr)
                     refinement_images = self.convert_images(refinement_img)
                     

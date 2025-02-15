@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 from einops import rearrange
-from src.evaluation.metrics import compute_psnr
+from src.evaluation.metrics import compute_psnr, compute_ssim, compute_lpips
 from tqdm import tqdm
 from einops import rearrange, repeat
 import wandb
@@ -15,6 +15,9 @@ from typing import Literal
 class RefinerCfg:
     name: Literal["refiner"]
     num_steps: int
+    patience: int = 15 # for the early stopping
+    min_delta: float = 1e-4 # for the early stopping
+    
     
 lrs_HPO = { #coming from HPO
     'means': 0.000029975,
@@ -69,58 +72,98 @@ class Refiner(nn.Module):
                 'name': 'rotations'
             }
         ]
-        # You could also set a global default lr and override it per group:
-        # return torch.optim.Adam(param_groups, lr=0.0, eps=1e-15)
         return torch.optim.Adam(param_groups, eps=1e-15)
     
-    def forward(self, batch, gaussians, global_step):
+    def forward(self, batch, gaussians, _):
         with torch.inference_mode(False):  # 🔥 Force autograd to work
             with torch.enable_grad():  # ✅ Ensure gradients are enabled
                 self.initialize_parameters(gaussians)
                 self.optimizer = self.get_optimizer()
                 
-                with torch.enable_grad(): 
-                    # Batch contains a set of extrinsics, intrinsics, near, far and image
-                    b,v,_,_ = batch['extrinsics'].shape
-                    missing_dim = int(v / batch['near'].shape[1])
-                    batch['near'] = repeat(batch['near'], 'b v -> b (v d)', d=missing_dim)
-                    batch['far'] = repeat(batch['far'], 'b v -> b (v d)', d=missing_dim)
+                # Batch contains a set of extrinsics, intrinsics, near, far and image
+                b,v,_,_ = batch['extrinsics'].shape
+                missing_dim = int(v / batch['near'].shape[1])
+                batch['near'] = repeat(batch['near'], 'b v -> b (v d)', d=missing_dim)
+                batch['far'] = repeat(batch['far'], 'b v -> b (v d)', d=missing_dim)
                 
-                    for i in tqdm(range(100), desc="Refinement Progress"):
-                        # Update `gaussians` parameters from learnable parameters
-                        gaussians.means = self.means
-                        gaussians.harmonics = self.harmonics
-                        gaussians.opacities = self.opacities
-                        gaussians.scales = self.scales
-                        gaussians.rotations = self.rotations
+                # 🔥 Early stopping variables
+                best_loss = float("inf")
+                patience_counter = 0
+                patience = self.cfg.patience
+                min_delta = self.cfg.min_delta
+
+                psnr_t0 = 0
+                ssim_t0 = 0
+                lpips_t0 = 0
+                for i in tqdm(range(10000), desc="Refinement Progress"):
+                    # Update `gaussians` parameters from learnable parameters
+                    gaussians.means = self.means
+                    gaussians.harmonics = self.harmonics
+                    gaussians.opacities = self.opacities
+                    gaussians.scales = self.scales
+                    gaussians.rotations = self.rotations
+                    
+                
+                    output = self.decoder.forward(
+                        gaussians,
+                        batch['extrinsics'],
+                        batch['intrinsics'],
+                        batch['near'],
+                        batch['far'],
+                        (batch['image'].shape[-2], batch['image'].shape[-1]),
+                        depth_mode=None,
+                        use_scale_and_rotation=True,
+                    )
                         
                     
-                        output = self.decoder.forward(
-                            gaussians,
-                            batch['extrinsics'],
-                            batch['intrinsics'],
-                            batch['near'],
-                            batch['far'],
-                            (batch['image'].shape[-2], batch['image'].shape[-1]),
-                            depth_mode=None,
-                            use_scale_and_rotation=True,
-                        )
-                            
-                        psnr_probabilistic = compute_psnr(
-                            rearrange(batch['image'], "b v c h w -> (b v) c h w"),
-                            rearrange(output.color, "b v c h w -> (b v) c h w"),
-                        )
+                    total_loss = self.compute_loss(output, batch['image'])
+                    total_loss.backward()
+                    
+                    psnr_probabilistic = compute_psnr(
+                        rearrange(batch['image'], "b v c h w -> (b v) c h w"),
+                        rearrange(output.color, "b v c h w -> (b v) c h w"),
+                    )
+                    
+                    ssim = compute_ssim(
+                        rearrange(batch['image'], "b v c h w -> (b v) c h w"),
+                        rearrange(output.color, "b v c h w -> (b v) c h w"),
+                    )
+                    
+                    lpips = compute_lpips(
+                        rearrange(batch['image'], "b v c h w -> (b v) c h w"),
+                        rearrange(output.color, "b v c h w -> (b v) c h w"),
+                    )
+                    
+                    
+                    if i == 0:
+                        psnr_t0 = psnr_probabilistic.mean().item()
+                        ssim_t0 = ssim.mean().item()
+                        lpips_t0 = lpips.mean().item()
                         
-                        total_loss = self.compute_loss(output, batch['image'])
-                        total_loss.backward()
-                        
-                        if i % 30 == 0:
-                            Image.fromarray((output.color[0][0] * 255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"outputs/refined.png")
-                            print(f"\t\tSTEP:{i} ====> PSNR: {psnr_probabilistic.mean().item()}, Loss: {total_loss}")
 
-                        with torch.no_grad():
-                            self.optimizer.step()
-                            self.optimizer.zero_grad(set_to_none=True)
+                    with torch.no_grad():
+                        self.optimizer.step()
+                        self.optimizer.zero_grad(set_to_none=True)
+
+                    # 🔥 EARLY STOPPING CHECK 🔥
+                    current_loss = total_loss.item()
+                    if current_loss < best_loss - min_delta:
+                        best_loss = current_loss  # Save best loss
+                        patience_counter = 0  # Reset patience counter
+                    else:
+                        patience_counter += 1  # Increment patience counter
+
+                    # 🔥 Stop if no improvement for `patience` steps
+                    if patience_counter >= patience:
+                        print(f"🛑 Early stopping at step {i}, best loss: {best_loss:.6f}")
+                        break
+
+                
+                psnr_final = psnr_probabilistic.mean().item()
+                ssim_final = ssim.mean().item()
+                lpips_final = lpips.mean().item()
+                print(f"PSNR: {psnr_final:.3f} | SSIM: {ssim_final:.3f} | LPIPS: {lpips_final:.3f}")
+                print(f"PSNR Improvement: {psnr_final - psnr_t0:.3f} | SSIM Improvement: {ssim_final - ssim_t0:.3f} | LPIPS Improvement: {lpips_final - lpips_t0:.3f}")
                 
         return psnr_probabilistic, total_loss
     
