@@ -42,6 +42,7 @@ from .encoder import Encoder
 from .encoder.visualization.encoder_visualizer import EncoderVisualizer
 from PIL import Image
 from ..misc.utilities import save_gaussians
+from .types import Gaussians
 
 @dataclass
 class OptimizerCfg:
@@ -195,90 +196,104 @@ class ModelWrapper(LightningModule):
                 self.global_step,
                 deterministic=False,
             )
-            
-        # if self.refiner is not None:
-        #     gaussians = self.refiner.forward(batch['refinement'], gaussians, self.global_step)
+            original_gaussians = Gaussians(
+                means=gaussians.means.clone().detach(), 
+                harmonics=gaussians.harmonics.clone().detach(), 
+                opacities=gaussians.opacities.clone().detach(), 
+                scales=gaussians.scales.clone().detach(), 
+                rotations=gaussians.rotations.clone().detach(),
+                covariances=gaussians.covariances.clone().detach()
+            )
             
         with self.benchmarker.time("decoder", num_calls=v):
-            output = self.decoder.forward(
-                gaussians,
-                batch["target"]["extrinsics"],
-                batch["target"]["intrinsics"],
-                batch["target"]["near"],
-                batch["target"]["far"],
-                (h, w),
+            output_mv = self.decoder.forward(
+                gaussians=original_gaussians,
+                extrinsics=batch["target"]["extrinsics"],
+                intrinsics=batch["target"]["intrinsics"],
+                near=batch["target"]["near"],
+                far=batch["target"]["far"],
+                image_shape=(h, w),
                 depth_mode=None,
                 use_scale_and_rotation=True,
             )
-
-        # --------------------- TO REMOVE ------------ 
-        # Render on the CONTEXT 
-        output_ctx = self.decoder.forward(
-            gaussians,
-            batch["context"]["extrinsics"],
-            batch["context"]["intrinsics"],
-            batch["context"]["near"],
-            batch["context"]["far"],
-            (h, w),
-            depth_mode=None,
-        )
-        
-        (scene,) = batch["scene"]
-        name = get_cfg()["wandb"]["name"]
-        images_prob = output_ctx.color[0] # [v, c, h, w]
-        path = self.test_cfg.output_path / name
-        if self.refiner is not None:
-            file_name = f"ctx_{batch_idx:0>6}_SR.png"
-        else:
-            file_name = f"ctx_{batch_idx:0>6}.png"
-        for index, color in zip(batch["context"]["index"][0], images_prob):
-            save_image(color, path / scene / f"color/{file_name}.png")
             
-        # Save Also the predicted gaussian for debugging
-        save_gaussians(gaussians=gaussians, path=path / scene / f"gaussians/ctx_{index:0>6}.json")
-        # ------------------------------------
+        if self.refiner is not None:
+            psnr_refiner, loss_refiner = self.refiner.forward(batch['refinement'], gaussians, self.global_step)
+            refined_gaussians = Gaussians(
+                means=self.refiner.means.detach(), 
+                harmonics=self.refiner.harmonics.detach(), 
+                opacities=self.refiner.opacities.detach(), 
+                scales=self.refiner.scales.detach(), 
+                rotations=self.refiner.rotations.detach(),
+                covariances=None # We use scales and rotations
+            )
+            output_refiner = self.decoder.forward(
+                gaussians=refined_gaussians,
+                extrinsics=batch["target"]["extrinsics"],
+                intrinsics=batch["target"]["intrinsics"],
+                near=batch["target"]["near"],
+                far=batch["target"]["far"],
+                image_shape=(h, w),
+                depth_mode=None,
+                use_scale_and_rotation=True,
+            )
+       
 
         (scene,) = batch["scene"]
         name = get_cfg()["wandb"]["name"]
         path = self.test_cfg.output_path / name
-        images_prob = output.color[0]
+        rgb_mv = output_mv.color[0]
+        rgb_refiner = output_refiner.color[0]
         rgb_gt = batch["target"]["image"][0]
+        
+        
+        #---------  Compute scores ------
+        if self.test_cfg.compute_scores:
+            if batch_idx < self.test_cfg.eval_time_skip_steps:
+                self.time_skip_steps_dict["encoder"] += 1
+                self.time_skip_steps_dict["decoder"] += v
 
+            if f"psnr" not in self.test_step_outputs:
+                self.test_step_outputs[f"psnr"] = []
+                if self.refiner is not None:
+                    self.test_step_outputs[f"psnr_refiner"] = []
+            if f"ssim" not in self.test_step_outputs:
+                self.test_step_outputs[f"ssim"] = []
+                if self.refiner is not None:
+                    self.test_step_outputs[f"ssim_refiner"] = []
+            if f"lpips" not in self.test_step_outputs:
+                self.test_step_outputs[f"lpips"] = []
+                if self.refiner is not None:    
+                    self.test_step_outputs[f"lpips_refiner"] = []
+            
+                
+            # Refinement Scores
+            if self.refiner is not None:
+                self.test_step_outputs[f"psnr_refiner"].append(compute_psnr(rgb_gt, rgb_refiner).mean().item())
+                self.test_step_outputs[f"ssim_refiner"].append(compute_ssim(rgb_gt, rgb_refiner).mean().item())
+                self.test_step_outputs[f"lpips_refiner"].append(compute_lpips(rgb_gt, rgb_refiner).mean().item())
+                
+            self.test_step_outputs[f"psnr"].append(compute_psnr(rgb_gt, rgb_mv).mean().item())
+            self.test_step_outputs[f"ssim"].append(compute_ssim(rgb_gt, rgb_mv).mean().item())
+            self.test_step_outputs[f"lpips"].append(compute_lpips(rgb_gt, rgb_mv).mean().item())
+        # -----------------
+            
         # Save images.
-        # if self.test_cfg.save_image:
-        for index, color in zip(batch["target"]["index"][0], images_prob):
-            save_image(color, path / scene / f"color/{index:0>6}.png")
+        if self.test_cfg.save_image:
+            for index, color in zip(batch["target"]["index"][0], rgb_mv):
+                save_image(color, path / scene / f"color/{index:0>6}.png")
+            
+       
+        if self.refiner is not None:
+            for index, color in zip(batch["target"]["index"][0], rgb_refiner):
+                Image.fromarray((color * 255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(path / scene / f"color/refined_{index:0>6}.png")
 
         # save video
         if self.test_cfg.save_video:
             frame_str = "_".join([str(x.item()) for x in batch["context"]["index"][0]])
             save_video(
-                [a for a in images_prob],
+                [a for a in rgb_mv],
                 path / "video" / f"{scene}_frame_{frame_str}.mp4",
-            )
-
-        # compute scores
-        if self.test_cfg.compute_scores:
-            if batch_idx < self.test_cfg.eval_time_skip_steps:
-                self.time_skip_steps_dict["encoder"] += 1
-                self.time_skip_steps_dict["decoder"] += v
-            rgb = images_prob
-
-            if f"psnr" not in self.test_step_outputs:
-                self.test_step_outputs[f"psnr"] = []
-            if f"ssim" not in self.test_step_outputs:
-                self.test_step_outputs[f"ssim"] = []
-            if f"lpips" not in self.test_step_outputs:
-                self.test_step_outputs[f"lpips"] = []
-
-            self.test_step_outputs[f"psnr"].append(
-                compute_psnr(rgb_gt, rgb).mean().item()
-            )
-            self.test_step_outputs[f"ssim"].append(
-                compute_ssim(rgb_gt, rgb).mean().item()
-            )
-            self.test_step_outputs[f"lpips"].append(
-                compute_lpips(rgb_gt, rgb).mean().item()
             )
 
     def on_test_end(self) -> None:

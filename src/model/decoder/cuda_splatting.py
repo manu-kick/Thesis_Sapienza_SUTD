@@ -50,9 +50,9 @@ def render_cuda(
     image_shape: tuple[int, int],
     background_color: Float[Tensor, "batch 3"],
     gaussian_means: Float[Tensor, "batch gaussian 3"],
-    gaussian_covariances: Float[Tensor, "batch gaussian 3 3"],
     gaussian_sh_coefficients: Float[Tensor, "batch gaussian 3 d_sh"],
     gaussian_opacities: Float[Tensor, "batch gaussian"],
+    gaussian_covariances: Float[Tensor, "batch gaussian 3 3"] | None = None,
     gaussian_scales: Float[Tensor, "batch gaussian 3"] | None = None,
     gaussian_rotations: Float[Tensor, "batch gaussian 4"] | None = None,
     scale_invariant: bool = True,
@@ -61,18 +61,22 @@ def render_cuda(
 ) -> Float[Tensor, "batch 3 height width"]:
     assert use_sh or gaussian_sh_coefficients.shape[-1] == 1
 
+    if gaussian_covariances is None and (gaussian_scales is None and gaussian_rotations is None):
+        raise ValueError("Either `gaussian_covariances` or (`gaussian_scales` and `gaussian_rotations`) must be provided.")
+    
     # Make sure everything is in a range where numerical issues don't appear.
     if scale_invariant:
         scale = 1 / near
         extrinsics = extrinsics.clone()
         extrinsics[..., :3, 3] = extrinsics[..., :3, 3] * scale[:, None]
-        gaussian_covariances = gaussian_covariances * (scale[:, None, None, None] ** 2)
         gaussian_means = gaussian_means * scale[:, None, None]
         near = near * scale
         far = far * scale
         if use_scale_and_rotation:
             scales_rotated = gaussian_scales * scale[:, None, None]
             rotations_rotated = gaussian_rotations
+        if gaussian_covariances is not None:
+            gaussian_covariances = gaussian_covariances * (scale[:, None, None, None] ** 2) 
 
     _, _, _, n = gaussian_sh_coefficients.shape
     degree = isqrt(n) - 1

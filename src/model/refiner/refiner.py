@@ -3,6 +3,7 @@ import torch
 from einops import rearrange
 from src.evaluation.metrics import compute_psnr
 from tqdm import tqdm
+from einops import rearrange, repeat
 import wandb
 import numpy as np
 from PIL import Image
@@ -35,8 +36,10 @@ class Refiner(nn.Module):
         self.means = nn.Parameter(gaussians.means.clone().detach(), requires_grad=True)
         self.harmonics = nn.Parameter(gaussians.harmonics.clone().detach(), requires_grad=True)
         self.opacities = nn.Parameter(gaussians.opacities.clone().detach(), requires_grad=True)
-        self.scales = nn.Parameter(gaussians.scales_rotated.clone().detach(), requires_grad=True) 
-        self.rotations = nn.Parameter(gaussians.rotations_rotated.clone().detach(), requires_grad=True) 
+        self.scales = nn.Parameter(gaussians.scales.clone().detach(), requires_grad=True) 
+        self.rotations = nn.Parameter(gaussians.rotations.clone().detach(), requires_grad=True) 
+        
+        
             
     def get_optimizer(self):
         param_groups = [
@@ -71,30 +74,60 @@ class Refiner(nn.Module):
         return torch.optim.Adam(param_groups, eps=1e-15)
     
     def forward(self, batch, gaussians, global_step):
-        self.initialize_parameters(gaussians)
-        self.optimizer = self.get_optimizer()
+        with torch.inference_mode(False):  # 🔥 Force autograd to work
+            with torch.enable_grad():  # ✅ Ensure gradients are enabled
+                self.initialize_parameters(gaussians)
+                self.optimizer = self.get_optimizer()
+                
+                with torch.enable_grad(): 
+                    # Batch contains a set of extrinsics, intrinsics, near, far and image
+                    b,v,_,_ = batch['extrinsics'].shape
+                    missing_dim = int(v / batch['near'].shape[1])
+                    batch['near'] = repeat(batch['near'], 'b v -> b (v d)', d=missing_dim)
+                    batch['far'] = repeat(batch['far'], 'b v -> b (v d)', d=missing_dim)
+                
+                    for i in tqdm(range(100), desc="Refinement Progress"):
+                        # Update `gaussians` parameters from learnable parameters
+                        gaussians.means = self.means
+                        gaussians.harmonics = self.harmonics
+                        gaussians.opacities = self.opacities
+                        gaussians.scales = self.scales
+                        gaussians.rotations = self.rotations
+                        
+                    
+                        output = self.decoder.forward(
+                            gaussians,
+                            batch['extrinsics'],
+                            batch['intrinsics'],
+                            batch['near'],
+                            batch['far'],
+                            (batch['image'].shape[-2], batch['image'].shape[-1]),
+                            depth_mode=None,
+                            use_scale_and_rotation=True,
+                        )
+                            
+                        psnr_probabilistic = compute_psnr(
+                            rearrange(batch['image'], "b v c h w -> (b v) c h w"),
+                            rearrange(output.color, "b v c h w -> (b v) c h w"),
+                        )
+                        
+                        total_loss = self.compute_loss(output, batch['image'])
+                        total_loss.backward()
+                        
+                        if i % 30 == 0:
+                            Image.fromarray((output.color[0][0] * 255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"outputs/refined.png")
+                            print(f"\t\tSTEP:{i} ====> PSNR: {psnr_probabilistic.mean().item()}, Loss: {total_loss}")
+
+                        with torch.no_grad():
+                            self.optimizer.step()
+                            self.optimizer.zero_grad(set_to_none=True)
+                
+        return psnr_probabilistic, total_loss
+    
+    def compute_loss(self, output, target):
+        total_loss = torch.tensor(0.0, device=output.color.device, requires_grad=True)
+        delta = output.color - target
+        total_loss = (delta**2).mean()
+    
+        return total_loss
         
-        for i in tqdm(range(self.cfg.num_steps), desc="Refinement Progress"):
-            # Update `gaussians` parameters from learnable parameters
-            gaussians.means = self.means
-            gaussians.harmonics = self.harmonics
-            gaussians.opacities = self.opacities
-            gaussians.scales = self.scales
-            gaussians.rotations = self.rotations
-            
-            # Batch contains a set of extrinsics, intrinsics, near, far and image
-            output = self.decoder.forward(
-                gaussians,
-                batch['extrinsics'],
-                batch['intrinsics'],
-                batch['near'],
-                batch['far'],
-                (batch['image'].shape[-2], batch['image'].shape[-1]),
-                batch_size=batch['image'].shape[0],
-                views=batch['image'].shape[1],
-                depth_mode=None,
-            )
-            
-            print("Output shape: ", output.shape)
-            
-        return 0 # for now

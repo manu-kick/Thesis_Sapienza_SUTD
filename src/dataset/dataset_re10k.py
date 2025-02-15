@@ -231,8 +231,8 @@ class DatasetRE10k(IterableDataset):
                         "index": target_indices,
                     },
                     "refinement": {
-                        "extrinsics": refinement_intrinsics,
-                        "intrinsics": refinement_extrinsics,
+                        "extrinsics": refinement_extrinsics,
+                        "intrinsics": refinement_intrinsics,
                         "image": refinement_images,
                         "near": self.get_bound("near", refinement_indices.shape[1]) / nf_scale,
                         "far": self.get_bound("far", refinement_indices.shape[1]) / nf_scale,

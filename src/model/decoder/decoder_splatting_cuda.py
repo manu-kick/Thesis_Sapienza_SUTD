@@ -45,18 +45,18 @@ class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):
     ) -> DecoderOutput:
         b, v, _, _ = extrinsics.shape
         color = render_cuda(
-            rearrange(extrinsics, "b v i j -> (b v) i j"),
-            rearrange(intrinsics, "b v i j -> (b v) i j"),
-            rearrange(near, "b v -> (b v)"),
-            rearrange(far, "b v -> (b v)"),
-            image_shape,
-            repeat(self.background_color, "c -> (b v) c", b=b, v=v),
-            repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=v),
-            repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=v),
-            repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=v),
-            repeat(gaussians.opacities, "b g -> (b v) g", v=v),
-            repeat(gaussians.scales, "b g xyz-> (b v) g xyz", v=v), #NOTE: we dont need the rotated ones
-            repeat(gaussians.rotations, "b g xyzw -> (b v) g xyzw", v=v), #NOTE: we dont need the rotated ones
+            extrinsics=rearrange(extrinsics, "b v i j -> (b v) i j"),
+            intrinsics=rearrange(intrinsics, "b v i j -> (b v) i j"),
+            near=rearrange(near, "b v -> (b v)"),
+            far=rearrange(far, "b v -> (b v)"),
+            image_shape=image_shape,
+            background_color=repeat(self.background_color, "c -> (b v) c", b=b, v=v),
+            gaussian_means=repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=v),
+            gaussian_covariances=repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=v) if gaussians.covariances is not None else None,
+            gaussian_sh_coefficients=repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=v),
+            gaussian_opacities=repeat(gaussians.opacities, "b g -> (b v) g", v=v),
+            gaussian_scales=repeat(gaussians.scales, "b g xyz-> (b v) g xyz", v=v), #added
+            gaussian_rotations=repeat(gaussians.rotations, "b g xyzw -> (b v) g xyzw", v=v), #added
             use_scale_and_rotation=use_scale_and_rotation
         )
         color = rearrange(color, "(b v) c h w -> b v c h w", b=b, v=v)
