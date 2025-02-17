@@ -1,7 +1,7 @@
 # EMANUELE RUCCI - Thesis Project (Temp Readme) 
 Thesis developed in Singapore university of technology and design, for the course of Artificial Intelligence and Robotics held in Sapienza, University of Rome.
 
-!(assets/other_contents/Uni_Logos.jpg)
+![Universities Logos](assets/other_contents/Uni_Logos.jpg)
 
 ## Overview
 This repository contains the materials and code for my Master's thesis project. The project focuses on [brief description of your thesis topic].
