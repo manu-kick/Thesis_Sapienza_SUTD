@@ -29,9 +29,7 @@ def sorted_test_src_views_fixed(cam2worlds_dict, test_views, train_views):
 
     # Convert indices into proper mapping for train_views
     src_idx = [[train_views[i] for i in src_idx[:, j].tolist()] for j in range(src_idx.shape[1])]
-
-
-
+    
     return src_idx  # This is now a list of lists
 
 

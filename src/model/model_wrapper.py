@@ -186,7 +186,7 @@ class ModelWrapper(LightningModule):
 
     def test_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
-        b, v, _, h, w = batch["target"]["image"].shape
+        b, v, t , h, w = batch["target"]["image"].shape
         assert b == 1
 
         # Render Gaussians.
@@ -218,76 +218,100 @@ class ModelWrapper(LightningModule):
             )
             
         if self.refiner is not None:
-            psnr_refiner, loss_refiner = self.refiner.forward(batch['refinement'], gaussians, self.global_step)
-            refined_gaussians = Gaussians(
-                means=self.refiner.means.detach(), 
-                harmonics=self.refiner.harmonics.detach(), 
-                opacities=self.refiner.opacities.detach(), 
-                scales=self.refiner.scales.detach(), 
-                rotations=self.refiner.rotations.detach(),
-                covariances=None # We use scales and rotations
-            )
-            output_refiner = self.decoder.forward(
-                gaussians=refined_gaussians,
-                extrinsics=batch["target"]["extrinsics"],
-                intrinsics=batch["target"]["intrinsics"],
-                near=batch["target"]["near"],
-                far=batch["target"]["far"],
-                image_shape=(h, w),
-                depth_mode=None,
-                use_scale_and_rotation=True,
-            )
-       
-
-        (scene,) = batch["scene"]
-        name = get_cfg()["wandb"]["name"]
-        path = self.test_cfg.output_path / name
-        rgb_mv = output_mv.color[0]
-        rgb_refiner = output_refiner.color[0]
-        rgb_gt = batch["target"]["image"][0]
-        
-        
-        #---------  Compute scores ------
-        if self.test_cfg.compute_scores:
-            if batch_idx < self.test_cfg.eval_time_skip_steps:
-                self.time_skip_steps_dict["encoder"] += 1
-                self.time_skip_steps_dict["decoder"] += v
-
-            if f"psnr" not in self.test_step_outputs:
-                self.test_step_outputs[f"psnr"] = []
-                if self.refiner is not None:
-                    self.test_step_outputs[f"psnr_refiner"] = []
-            if f"ssim" not in self.test_step_outputs:
-                self.test_step_outputs[f"ssim"] = []
-                if self.refiner is not None:
-                    self.test_step_outputs[f"ssim_refiner"] = []
-            if f"lpips" not in self.test_step_outputs:
-                self.test_step_outputs[f"lpips"] = []
-                if self.refiner is not None:    
-                    self.test_step_outputs[f"lpips_refiner"] = []
+            psnr_per_view = []
+            ssim_per_view = []
+            lpips_per_view = []
+            psnr_per_view_refiner = []
+            ssim_per_view_refiner = []
+            lpips_per_view_refiner = []
             
+            for t_i in range(t):  # Iterate over target views
+                # Forward the data through the refiner for the given target view
+                _, _ = self.refiner.forward(
+                    {   
+                        "extrinsics": batch['refinement']['extrinsics'][:, t_i],
+                        "intrinsics": batch['refinement']['intrinsics'][:, t_i],
+                        "near": batch['refinement']['near'][:, t_i],
+                        "far": batch['refinement']['far'][:, t_i],
+                        "image": batch['refinement']['image'][:, t_i],
+                    }, 
+                    gaussians, 
+                    self.global_step
+                )
+                # get the refined gaussians for the target view
+                refined_gaussians_i = Gaussians(
+                    means=self.refiner.means.detach(), 
+                    harmonics=self.refiner.harmonics.detach(), 
+                    opacities=self.refiner.opacities.detach(), 
+                    scales=self.refiner.scales.detach(), 
+                    rotations=self.refiner.rotations.detach(),
+                    covariances=None # We use scales and rotations
+                )
+                # Splat using the refined gaussians for the target view
+                output_refiner_i = self.decoder.forward(
+                    gaussians=refined_gaussians_i,
+                    extrinsics=batch['target']['extrinsics'][:, t_i].unsqueeze(1),
+                    intrinsics=batch['target']['intrinsics'][:, t_i].unsqueeze(1),
+                    near=batch['target']['near'][:, t_i].unsqueeze(1),
+                    far=batch['target']['far'][:, t_i].unsqueeze(1),
+                    image_shape=(h, w),
+                    depth_mode=None,
+                    use_scale_and_rotation=True,
+                )
+                    
+                (scene,) = batch["scene"]
+                name = get_cfg()["wandb"]["name"]
+                path = self.test_cfg.output_path / name
+                rgb_mv = output_mv.color[0][t_i].unsqueeze(0) # t_i-th mv's output target view
+                rgb_refiner = output_refiner_i.color[0][0].unsqueeze(0) # t_i-th refiner's output target view using the refined gaussians with obtained with its refinement set
+                rgb_gt = batch["target"]["image"][0][t_i].unsqueeze(0) # t_i-th target view
                 
-            # Refinement Scores
-            if self.refiner is not None:
-                self.test_step_outputs[f"psnr_refiner"].append(compute_psnr(rgb_gt, rgb_refiner).mean().item())
-                self.test_step_outputs[f"ssim_refiner"].append(compute_ssim(rgb_gt, rgb_refiner).mean().item())
-                self.test_step_outputs[f"lpips_refiner"].append(compute_lpips(rgb_gt, rgb_refiner).mean().item())
-                
-            self.test_step_outputs[f"psnr"].append(compute_psnr(rgb_gt, rgb_mv).mean().item())
-            self.test_step_outputs[f"ssim"].append(compute_ssim(rgb_gt, rgb_mv).mean().item())
-            self.test_step_outputs[f"lpips"].append(compute_lpips(rgb_gt, rgb_mv).mean().item())
-        # -----------------
+                # ---- Compute scores per view ----
+                if self.test_cfg.compute_scores:
+                    psnr_per_view.append(compute_psnr(rgb_gt, rgb_mv).item())
+                    ssim_per_view.append(compute_ssim(rgb_gt, rgb_mv).item())
+                    lpips_per_view.append(compute_lpips(rgb_gt, rgb_mv).item())
+                    psnr_per_view_refiner.append(compute_psnr(rgb_gt, rgb_refiner).item())
+                    ssim_per_view_refiner.append(compute_ssim(rgb_gt, rgb_refiner).item())
+                    lpips_per_view_refiner.append(compute_lpips(rgb_gt, rgb_refiner).item())
+                # ------------------------------
             
-        # Save images.
-        if self.test_cfg.save_image:
-            for index, color in zip(batch["target"]["index"][0], rgb_mv):
-                save_image(color, path / scene / f"color/{index:0>6}.png")
-            
-       
-        if self.refiner is not None:
-            for index, color in zip(batch["target"]["index"][0], rgb_refiner):
-                Image.fromarray((color * 255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(path / scene / f"color/refined_{index:0>6}.png")
+            # ---- Compute Averages Over Target Views ----
+            if self.test_cfg.compute_scores:
+                # Initialize metric storage if not already done
+                if "psnr" not in self.test_step_outputs:
+                    self.test_step_outputs["psnr"] = []
+                    if self.refiner is not None:
+                        self.test_step_outputs["psnr_refiner"] = []
+                if "ssim" not in self.test_step_outputs:
+                    self.test_step_outputs["ssim"] = []
+                    if self.refiner is not None:
+                        self.test_step_outputs["ssim_refiner"] = []
+                if "lpips" not in self.test_step_outputs:
+                    self.test_step_outputs["lpips"] = []
+                    if self.refiner is not None:
+                        self.test_step_outputs["lpips_refiner"] = []
 
+                # Compute and store averages
+                self.test_step_outputs["psnr"].append(np.mean(psnr_per_view))
+                self.test_step_outputs["ssim"].append(np.mean(ssim_per_view))
+                self.test_step_outputs["lpips"].append(np.mean(lpips_per_view))
+
+                if self.refiner is not None:
+                    self.test_step_outputs["psnr_refiner"].append(np.mean(psnr_per_view_refiner))
+                    self.test_step_outputs["ssim_refiner"].append(np.mean(ssim_per_view_refiner))
+                    self.test_step_outputs["lpips_refiner"].append(np.mean(lpips_per_view_refiner))
+                        
+                # Save images.
+                if self.test_cfg.save_image:
+                    idx = 0
+                    for index, color in zip(batch["target"]["index"][0], rgb_mv.squeeze(0)):
+                        save_image(color, path / scene / f"color/{index:0>6}.png")
+                        idx += 1
+                        if self.refiner is not None: # TODO and save metrics
+                            Image.fromarray((rgb_refiner[0] * 255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(path / scene / f"color/refined_{index:0>6}.png")
+            
+            
         # save video
         if self.test_cfg.save_video:
             frame_str = "_".join([str(x.item()) for x in batch["context"]["index"][0]])

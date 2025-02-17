@@ -20,14 +20,9 @@ class IndexEntry:
 
 def sorted_test_src_views_fixed(cam2worlds_dict, test_views, train_views):
     # use fixed src views for testing, instead of for using different src views for different test views
-    cam_pos_trains = np.stack([cam2worlds_dict[x] for x in train_views])[
-        :, :3, 3
-    ]  # [V, 3], V src views
-    cam_pos_target = np.stack([cam2worlds_dict[x] for x in test_views])[
-        :, :3, 3
-    ]  # [N, 3], N test views in total
-    dis = np.sum(
-        np.abs(cam_pos_trains[:, None] - cam_pos_target[None]), axis=(1, 2))
+    cam_pos_trains = np.stack([cam2worlds_dict[x] for x in train_views])[:, :3, 3]  # [V, 3], V src views
+    cam_pos_target = np.stack([cam2worlds_dict[x] for x in test_views])[:, :3, 3]  # [N, 3], N test views in total
+    dis = np.sum(np.abs(cam_pos_trains[:, None] - cam_pos_target[None]), axis=(1, 2))
     src_idx = np.argsort(dis)
     src_idx = [train_views[x] for x in src_idx]
 

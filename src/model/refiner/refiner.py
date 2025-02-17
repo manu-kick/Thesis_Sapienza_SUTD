@@ -81,10 +81,9 @@ class Refiner(nn.Module):
                 self.optimizer = self.get_optimizer()
                 
                 # Batch contains a set of extrinsics, intrinsics, near, far and image
-                b,v,_,_ = batch['extrinsics'].shape
-                missing_dim = int(v / batch['near'].shape[1])
-                batch['near'] = repeat(batch['near'], 'b v -> b (v d)', d=missing_dim)
-                batch['far'] = repeat(batch['far'], 'b v -> b (v d)', d=missing_dim)
+                _,v,_,_ = batch['extrinsics'].shape
+                batch['near'] = repeat(batch['near'], 'b -> b v', v=v)
+                batch['far'] = repeat(batch['far'], 'b -> b v ', v=v)
                 
                 # 🔥 Early stopping variables
                 best_loss = float("inf")
@@ -95,7 +94,7 @@ class Refiner(nn.Module):
                 psnr_t0 = 0
                 ssim_t0 = 0
                 lpips_t0 = 0
-                for i in tqdm(range(10000), desc="Refinement Progress"):
+                for i in tqdm(range(10), desc="Refinement Progress"):
                     # Update `gaussians` parameters from learnable parameters
                     gaussians.means = self.means
                     gaussians.harmonics = self.harmonics
@@ -159,7 +158,7 @@ class Refiner(nn.Module):
                         break
 
                 
-                psnr_final = psnr_probabilistic.mean().item()
+                psnr_final = psnr_probabilistic.mean().item() # One value for each refinement view
                 ssim_final = ssim.mean().item()
                 lpips_final = lpips.mean().item()
                 print(f"PSNR: {psnr_final:.3f} | SSIM: {ssim_final:.3f} | LPIPS: {lpips_final:.3f}")

@@ -88,7 +88,8 @@ class DatasetRE10k(IterableDataset):
                 [path for path in root.iterdir() if path.suffix == ".torch"]
             )
             self.chunks.extend(root_chunks)
-            
+        
+    
         if self.cfg.overfit_to_scene is not None:
             chunk_path = self.index[self.cfg.overfit_to_scene]
             self.chunks = [chunk_path] * len(self.chunks)
@@ -183,7 +184,6 @@ class DatasetRE10k(IterableDataset):
                 context_images = self.convert_images(context_images)
                 target_images = [example["images"][index.item()] for index in target_indices]
                 target_images = self.convert_images(target_images)
-                
                
                 # Skip the example if the images don't have the right shape.
                 context_image_invalid = context_images.shape[1:] != (3, 360, 640)
@@ -213,6 +213,8 @@ class DatasetRE10k(IterableDataset):
                     scale = 1
 
                 nf_scale = scale if self.cfg.baseline_scale_bounds else 1.0
+                target_count = target_indices.shape[0]
+                refinement_count = self.cfg.refinement_cfg['num_refinement_views']
                 example = {
                     "context": {
                         "extrinsics": extrinsics[context_indices],
@@ -231,9 +233,9 @@ class DatasetRE10k(IterableDataset):
                         "index": target_indices,
                     },
                     "refinement": {
-                        "extrinsics": refinement_extrinsics,
-                        "intrinsics": refinement_intrinsics,
-                        "image": refinement_images,
+                        "extrinsics": rearrange(refinement_extrinsics, "(t r) h w -> t r h w", t=target_count, r=refinement_count),
+                        "intrinsics": rearrange(refinement_intrinsics, "(t r) h w -> t r h w", t=target_count, r=refinement_count),
+                        "image": rearrange(refinement_images, "(t r) c h w -> t r c h w", t=target_count, r=refinement_count),
                         "near": self.get_bound("near", refinement_indices.shape[1]) / nf_scale,
                         "far": self.get_bound("far", refinement_indices.shape[1]) / nf_scale,
                         "index": refinement_indices,
