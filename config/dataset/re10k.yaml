@@ -25,5 +25,5 @@ test_times_per_scene: 1
 
 refinement: true
 refinement_cfg:
-  name: refinement_bounded
+  name: refinement_camera_proximity
   num_refinement_views: 4

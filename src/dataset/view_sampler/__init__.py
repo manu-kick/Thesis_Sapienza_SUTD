@@ -7,14 +7,14 @@ from .view_sampler_all import ViewSamplerAll, ViewSamplerAllCfg
 from .view_sampler_arbitrary import ViewSamplerArbitrary, ViewSamplerArbitraryCfg
 from .view_sampler_bounded import ViewSamplerBounded, ViewSamplerBoundedCfg
 from .view_sampler_evaluation import ViewSamplerEvaluation, ViewSamplerEvaluationCfg
-from .refinement_view_sampler_bounded import RefinementViewSamplerBounded, RefinementViewSamplerBoundedCfg
+from .refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximity, RefinementViewSamplerCameraProximityCfg
 
 VIEW_SAMPLERS: dict[str, ViewSampler[Any]] = {
     "all": ViewSamplerAll,
     "arbitrary": ViewSamplerArbitrary,
     "bounded": ViewSamplerBounded,
     "evaluation": ViewSamplerEvaluation,
-    "refinement_bounded": RefinementViewSamplerBounded,
+    "refinement_camera_proximity": RefinementViewSamplerCameraProximity,
 }
 
 ViewSamplerCfg = (
@@ -22,7 +22,7 @@ ViewSamplerCfg = (
     | ViewSamplerBoundedCfg
     | ViewSamplerEvaluationCfg
     | ViewSamplerAllCfg
-    | RefinementViewSamplerBoundedCfg
+    | RefinementViewSamplerCameraProximityCfg
 )
 
 

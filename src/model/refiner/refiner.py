@@ -17,6 +17,7 @@ class RefinerCfg:
     num_steps: int
     patience: int = 15 # for the early stopping
     min_delta: float = 1e-4 # for the early stopping
+    enable_early_stopping: bool = True # 🔥 Enable early stopping
     
     
 lrs_HPO = { #coming from HPO
@@ -94,7 +95,7 @@ class Refiner(nn.Module):
                 psnr_t0 = 0
                 ssim_t0 = 0
                 lpips_t0 = 0
-                for i in tqdm(range(10), desc="Refinement Progress"):
+                for i in tqdm(range(1000), desc="Refinement Progress"):
                     # Update `gaussians` parameters from learnable parameters
                     gaussians.means = self.means
                     gaussians.harmonics = self.harmonics
@@ -145,17 +146,18 @@ class Refiner(nn.Module):
                         self.optimizer.zero_grad(set_to_none=True)
 
                     # 🔥 EARLY STOPPING CHECK 🔥
-                    current_loss = total_loss.item()
-                    if current_loss < best_loss - min_delta:
-                        best_loss = current_loss  # Save best loss
-                        patience_counter = 0  # Reset patience counter
-                    else:
-                        patience_counter += 1  # Increment patience counter
+                    if self.cfg.enable_early_stopping:
+                        current_loss = total_loss.item()
+                        if current_loss < best_loss - min_delta:
+                            best_loss = current_loss  # Save best loss
+                            patience_counter = 0  # Reset patience counter
+                        else:
+                            patience_counter += 1  # Increment patience counter
 
-                    # 🔥 Stop if no improvement for `patience` steps
-                    if patience_counter >= patience:
-                        print(f"🛑 Early stopping at step {i}, best loss: {best_loss:.6f}")
-                        break
+                        # 🔥 Stop if no improvement for `patience` steps
+                        if patience_counter >= patience:
+                            print(f"🛑 Early stopping at step {i}, best loss: {best_loss:.6f}")
+                            break
 
                 
                 psnr_final = psnr_probabilistic.mean().item() # One value for each refinement view

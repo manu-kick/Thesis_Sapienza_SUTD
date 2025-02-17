@@ -5,7 +5,7 @@ from .dataset_re10k import DatasetRE10k, DatasetRE10kCfg
 from .dataset_panoptic import DatasetPanoptic, DatasetPanopticCfg
 from .types import Stage
 from .view_sampler import get_view_sampler
-from .view_sampler.refinement_view_sampler_bounded import RefinementViewSamplerBoundedCfg
+from .view_sampler.refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximityCfg
 
 DATASETS: dict[str, Dataset] = {
     "re10k": DatasetRE10k,
@@ -39,7 +39,7 @@ def get_dataset(
 
         if isinstance(refinement_cfg_dict, dict):
             # Convert dict to an instance of RefinementViewSamplerBoundedCfg
-            refinement_cfg = RefinementViewSamplerBoundedCfg(**refinement_cfg_dict)
+            refinement_cfg = RefinementViewSamplerCameraProximityCfg(**refinement_cfg_dict)
         else:
             refinement_cfg = refinement_cfg_dict  # Already an object
             

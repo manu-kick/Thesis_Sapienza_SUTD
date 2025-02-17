@@ -5,16 +5,16 @@ import torch
 from jaxtyping import Float, Int64
 from torch import Tensor
 
-from ..view_sampler import ViewSampler
+from . import ViewSampler
 
 
 @dataclass
-class RefinementViewSamplerBoundedCfg:
-    name: Literal["refinement_bounded"]
+class RefinementViewSamplerCameraProximityCfg:
+    name: Literal["refinement_camera_proximity"]
     num_refinement_views: int
 
 
-class RefinementViewSamplerBounded(ViewSampler[RefinementViewSamplerBoundedCfg]):
+class RefinementViewSamplerCameraProximity(ViewSampler[RefinementViewSamplerCameraProximityCfg]):
     def schedule(self, initial: int, final: int) -> int:
         fraction = self.global_step / self.cfg.warm_up_steps
         return min(initial + int((final - initial) * fraction), final)
