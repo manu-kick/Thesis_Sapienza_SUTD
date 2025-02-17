@@ -11,14 +11,11 @@ from . import ViewSampler
 @dataclass
 class RefinementViewSamplerCameraProximityCfg:
     name: Literal["refinement_camera_proximity"]
+    index_path: str # actually not useful here because we compute the indices directly
     num_refinement_views: int
 
 
 class RefinementViewSamplerCameraProximity(ViewSampler[RefinementViewSamplerCameraProximityCfg]):
-    def schedule(self, initial: int, final: int) -> int:
-        fraction = self.global_step / self.cfg.warm_up_steps
-        return min(initial + int((final - initial) * fraction), final)
-
     def sample(
         self,
         scene: str,

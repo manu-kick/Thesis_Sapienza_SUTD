@@ -19,6 +19,7 @@ from .shims.augmentation_shim import apply_augmentation_shim
 from .shims.crop_shim import apply_crop_shim
 from .types import Stage
 from .view_sampler import ViewSampler
+from .view_sampler.view_sampler_evaluation import ViewSamplerEvaluation
 from .view_sampler import get_view_sampler
 
 # DEBUGGER
@@ -89,7 +90,6 @@ class DatasetRE10k(IterableDataset):
             )
             self.chunks.extend(root_chunks)
         
-    
         if self.cfg.overfit_to_scene is not None:
             chunk_path = self.index[self.cfg.overfit_to_scene]
             self.chunks = [chunk_path] * len(self.chunks)
@@ -165,8 +165,13 @@ class DatasetRE10k(IterableDataset):
                     refinement_intr = []
                     refinement_extr = []
                     refinement_img = []
-                    for i in range(refinement_indices.shape[0]):
-                        for j in range(refinement_indices.shape[1]):
+                    
+                    # Cases: [RefinementViewSamplerContext]
+                    if len(refinement_indices.shape) == 1: 
+                        refinement_indices = repeat(refinement_indices, "r -> t r", t=target_indices.shape[0]) 
+                        
+                    for i in range(refinement_indices.shape[0]): # for each target view
+                        for j in range(refinement_indices.shape[1]): # for each refinement view
                             refinement_intr.append(intrinsics[refinement_indices[i,j]])
                             refinement_extr.append(extrinsics[refinement_indices[i,j]])
                             refinement_img.append(example["images"][refinement_indices[i,j]])
@@ -214,7 +219,11 @@ class DatasetRE10k(IterableDataset):
 
                 nf_scale = scale if self.cfg.baseline_scale_bounds else 1.0
                 target_count = target_indices.shape[0]
-                refinement_count = self.cfg.refinement_cfg['num_refinement_views']
+                refinement_count = self.cfg.refinement_cfg['num_refinement_views'] if self.cfg.refinement_cfg['name'] != "refinement_context" else refinement_indices.shape[1]
+                
+                #Near and far tensors
+                
+                
                 example = {
                     "context": {
                         "extrinsics": extrinsics[context_indices],
@@ -236,8 +245,8 @@ class DatasetRE10k(IterableDataset):
                         "extrinsics": rearrange(refinement_extrinsics, "(t r) h w -> t r h w", t=target_count, r=refinement_count),
                         "intrinsics": rearrange(refinement_intrinsics, "(t r) h w -> t r h w", t=target_count, r=refinement_count),
                         "image": rearrange(refinement_images, "(t r) c h w -> t r c h w", t=target_count, r=refinement_count),
-                        "near": self.get_bound("near", refinement_indices.shape[1]) / nf_scale,
-                        "far": self.get_bound("far", refinement_indices.shape[1]) / nf_scale,
+                        "near": self.get_bound("near", target_count) / nf_scale ,
+                        "far": self.get_bound("far", target_count) / nf_scale,
                         "index": refinement_indices,
                     } if self.cfg.refinement else None,
                     "scene": scene,

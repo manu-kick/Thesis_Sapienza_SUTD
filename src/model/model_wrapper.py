@@ -186,10 +186,10 @@ class ModelWrapper(LightningModule):
 
     def test_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
-        b, v, t , h, w = batch["target"]["image"].shape
+        b, t, c , h, w = batch["target"]["image"].shape
         assert b == 1
 
-        # Render Gaussians.
+        # Get Gaussians.
         with self.benchmarker.time("encoder"):
             gaussians = self.encoder(
                 batch["context"],
@@ -205,7 +205,7 @@ class ModelWrapper(LightningModule):
                 covariances=gaussians.covariances.clone().detach()
             )
             
-        with self.benchmarker.time("decoder", num_calls=v):
+        with self.benchmarker.time("decoder", num_calls=t):
             output_mv = self.decoder.forward(
                 gaussians=original_gaussians,
                 extrinsics=batch["target"]["extrinsics"],
@@ -231,7 +231,7 @@ class ModelWrapper(LightningModule):
                     {   
                         "extrinsics": batch['refinement']['extrinsics'][:, t_i],
                         "intrinsics": batch['refinement']['intrinsics'][:, t_i],
-                        "near": batch['refinement']['near'][:, t_i],
+                        "near": batch['refinement']['near'][:, t_i], #bs ,num_views
                         "far": batch['refinement']['far'][:, t_i],
                         "image": batch['refinement']['image'][:, t_i],
                     }, 

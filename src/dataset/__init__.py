@@ -6,6 +6,7 @@ from .dataset_panoptic import DatasetPanoptic, DatasetPanopticCfg
 from .types import Stage
 from .view_sampler import get_view_sampler
 from .view_sampler.refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximityCfg
+from .view_sampler.refinement_view_sampler_context import RefinementViewSamplerContextCfg
 
 DATASETS: dict[str, Dataset] = {
     "re10k": DatasetRE10k,
@@ -37,9 +38,14 @@ def get_dataset(
     if cfg.refinement:
         refinement_cfg_dict = cfg.refinement_cfg  # This is a dictionary
 
-        if isinstance(refinement_cfg_dict, dict):
-            # Convert dict to an instance of RefinementViewSamplerBoundedCfg
-            refinement_cfg = RefinementViewSamplerCameraProximityCfg(**refinement_cfg_dict)
+        if isinstance(refinement_cfg_dict, dict): 
+            # Convert dict to an instance of 
+            if refinement_cfg_dict["name"] == "refinement_camera_proximity":
+                refinement_cfg = RefinementViewSamplerCameraProximityCfg(**refinement_cfg_dict)
+            elif refinement_cfg_dict["name"] == "refinement_context":
+                refinement_cfg = RefinementViewSamplerContextCfg(**refinement_cfg_dict)
+            else:
+                raise ValueError(f"Unknown refinement view sampler {refinement_cfg_dict['name']}")
         else:
             refinement_cfg = refinement_cfg_dict  # Already an object
             
