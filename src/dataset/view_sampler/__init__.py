@@ -10,6 +10,7 @@ from .view_sampler_evaluation import ViewSamplerEvaluation, ViewSamplerEvaluatio
 from .refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximity, RefinementViewSamplerCameraProximityCfg
 from .refinement_view_sampler_context import RefinementViewSamplerContext, RefinementViewSamplerContextCfg
 from .refinement_view_sampler_camera_K_E import RefinementViewSamplerCameraKE, RefinementViewSamplerCameraKECfg
+from .refinement_view_sampler_random import RefinementViewSamplerRandom, RefinementViewSamplerRandomCfg
 
 VIEW_SAMPLERS: dict[str, ViewSampler[Any]] = {
     "all": ViewSamplerAll,
@@ -19,6 +20,7 @@ VIEW_SAMPLERS: dict[str, ViewSampler[Any]] = {
     "refinement_camera_proximity": RefinementViewSamplerCameraProximity,
     "refinement_context": RefinementViewSamplerContext, # Gives to the refiner the same set of views as the one used for obtain the raw gaussians from mv splat
     "refinement_camera_K_E": RefinementViewSamplerCameraKE,
+    "refinement_random": RefinementViewSamplerRandom,
 }
 
 ViewSamplerCfg = (
@@ -29,6 +31,7 @@ ViewSamplerCfg = (
     | RefinementViewSamplerContextCfg
     | RefinementViewSamplerCameraProximityCfg
     | RefinementViewSamplerCameraKECfg
+    | RefinementViewSamplerRandomCfg
 )
 
 

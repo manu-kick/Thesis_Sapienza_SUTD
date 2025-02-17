@@ -21,7 +21,7 @@ class RefinementViewSamplerCameraProximity(ViewSampler[RefinementViewSamplerCame
         scene: str,
         extrinsics: Float[Tensor, "view 4 4"],
         target_indices: Int64[Tensor, "targets"],
-        device: torch.device = torch.device("cpu"),
+        device: torch.device = torch.device("cpu") if torch.cuda.is_available() else torch.device("cpu"),
     ): # indices for refinement views
         num_views, _, _ = extrinsics.shape
         extrinsics = extrinsics.inverse()

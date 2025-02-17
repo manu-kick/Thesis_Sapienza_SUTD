@@ -8,6 +8,7 @@ from .view_sampler import get_view_sampler
 from .view_sampler.refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximityCfg
 from .view_sampler.refinement_view_sampler_context import RefinementViewSamplerContextCfg
 from .view_sampler.refinement_view_sampler_camera_K_E import RefinementViewSamplerCameraKECfg
+from .view_sampler.refinement_view_sampler_random import RefinementViewSamplerRandomCfg
 
 DATASETS: dict[str, Dataset] = {
     "re10k": DatasetRE10k,
@@ -38,15 +39,17 @@ def get_dataset(
     refinement_view_sampler = None
     if cfg.refinement:
         refinement_cfg_dict = cfg.refinement_cfg  # This is a dictionary
-
-        if isinstance(refinement_cfg_dict, dict): 
-            # Convert dict to an instance of 
+        
+        # Convert dict to an instance of 
+        if isinstance(refinement_cfg_dict, dict):     
             if refinement_cfg_dict["name"] == "refinement_camera_proximity":
                 refinement_cfg = RefinementViewSamplerCameraProximityCfg(**refinement_cfg_dict)
             elif refinement_cfg_dict["name"] == "refinement_context":
                 refinement_cfg = RefinementViewSamplerContextCfg(**refinement_cfg_dict)
             elif refinement_cfg_dict["name"] == "refinement_camera_K_E":
                 refinement_cfg = RefinementViewSamplerCameraKECfg(**refinement_cfg_dict)
+            elif refinement_cfg_dict["name"] == "refinement_random":
+                refinement_cfg = RefinementViewSamplerRandomCfg(**refinement_cfg_dict)
             else:
                 raise ValueError(f"Unknown refinement view sampler {refinement_cfg_dict['name']}")
         else:
