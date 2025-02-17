@@ -35,7 +35,7 @@ class RefinementViewSamplerCameraProximity(ViewSampler[RefinementViewSamplerCame
             refinement_indices = []
             for i in target_indices.tolist():
                 sorted_indices = torch.argsort(distances[i])  # Sort views by closest distance
-                closest_views = sorted_indices[1:self.cfg.num_refinement_views + 1]  # Skip self and take N closest
+                closest_views = sorted_indices[0:self.cfg.num_refinement_views ]  
                 refinement_indices.append(closest_views)
 
             refinement_indices = torch.stack(refinement_indices)  # Convert to tensor

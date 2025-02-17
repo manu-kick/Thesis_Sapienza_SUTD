@@ -7,6 +7,7 @@ from .types import Stage
 from .view_sampler import get_view_sampler
 from .view_sampler.refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximityCfg
 from .view_sampler.refinement_view_sampler_context import RefinementViewSamplerContextCfg
+from .view_sampler.refinement_view_sampler_camera_K_E import RefinementViewSamplerCameraKECfg
 
 DATASETS: dict[str, Dataset] = {
     "re10k": DatasetRE10k,
@@ -44,6 +45,8 @@ def get_dataset(
                 refinement_cfg = RefinementViewSamplerCameraProximityCfg(**refinement_cfg_dict)
             elif refinement_cfg_dict["name"] == "refinement_context":
                 refinement_cfg = RefinementViewSamplerContextCfg(**refinement_cfg_dict)
+            elif refinement_cfg_dict["name"] == "refinement_camera_K_E":
+                refinement_cfg = RefinementViewSamplerCameraKECfg(**refinement_cfg_dict)
             else:
                 raise ValueError(f"Unknown refinement view sampler {refinement_cfg_dict['name']}")
         else:
