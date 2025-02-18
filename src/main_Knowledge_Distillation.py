@@ -97,6 +97,7 @@ def train(cfg_dict: DictConfig):
             save_top_k=cfg.checkpointing.save_top_k,
             monitor="train_loss",
             mode="min",  # Lower is better.
+            auto_insert_metric_name=True
         )
     )
     for cb in callbacks:

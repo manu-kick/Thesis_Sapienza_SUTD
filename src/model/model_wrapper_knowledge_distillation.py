@@ -111,6 +111,17 @@ class ModelWrapper_KD(LightningModule):
             covariances=gaussians.covariances.clone().detach()
         )
         
+        output_mv = self.decoder.forward(
+            gaussians=original_gaussians,
+            extrinsics=batch["target"]["extrinsics"],
+            intrinsics=batch["target"]["intrinsics"],
+            near=batch["target"]["near"],
+            far=batch["target"]["far"],
+            image_shape=(h, w),
+            depth_mode=None,
+            use_scale_and_rotation=True,
+        )
+        
         # --- Refinement Process ---
         mse_losses = []
         if self.refiner is not None:
@@ -157,16 +168,31 @@ class ModelWrapper_KD(LightningModule):
         final_psnr_impr = np.mean(psnr_impr)
         final_ssim_impr = np.mean(ssim_impr)
         final_lpips_impr = np.mean(lpips_impr)
+        psnr_mv = compute_psnr(
+            rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
+            rearrange(output_mv.color, "b v c h w -> (b v) c h w"),
+        ).mean().item()
+        ssim_mv = compute_ssim(
+            rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+            rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
+        ).mean().item()
+        lpips_mv = compute_lpips(
+            rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+            rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
+        ).mean().item()
+        
     
         self.log("train_loss", loss, on_step=True, sync_dist=True)
         self.logger.log_metrics({
             "train/loss": loss.item(),
             "train/psnr_improvement": final_psnr_impr,
             "train/ssim_improvement": final_ssim_impr,
-            "train/lpips_improvement": final_lpips_impr
+            "train/lpips_improvement": final_lpips_impr,
+            "train/psnr_mean": psnr_mv,
+            "train/ssim_mean": ssim_mv,
+            "train/lpips_mean": lpips_mv
         },
         step=self.global_step)
-        # wandb.log({"train_loss": loss.item()}, step=int(self.trainer.global_step))
 
         return loss
 
