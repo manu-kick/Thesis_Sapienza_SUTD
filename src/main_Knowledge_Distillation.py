@@ -76,7 +76,7 @@ def train(cfg_dict: DictConfig):
             mode=cfg_dict.wandb.mode,
             name=f"{cfg_dict.wandb.name} ({output_dir.parent.name}/{output_dir.name})",
             tags=cfg_dict.wandb.get("tags", None),
-            log_model=False,
+            log_model=True,
             save_dir=output_dir,
             config=OmegaConf.to_container(cfg_dict),
             **wandb_extra_kwargs,
@@ -114,14 +114,13 @@ def train(cfg_dict: DictConfig):
         logger=logger,
         devices="auto",
         num_nodes=cfg.trainer.num_nodes,
-        strategy="ddp" if torch.cuda.device_count() > 1 else "auto",
+        strategy="auto",
         callbacks=callbacks,
         val_check_interval=cfg.trainer.val_check_interval,
         enable_progress_bar=cfg.mode == "test",
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         max_steps=cfg.trainer.max_steps,
-        # num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
-        num_sanity_val_steps=0,
+        num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
     )
     torch.manual_seed(cfg_dict.seed + trainer.global_rank)
 

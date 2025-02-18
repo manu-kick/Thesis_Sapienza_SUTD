@@ -91,7 +91,8 @@ class ModelWrapper_KD(LightningModule):
         if self.test_cfg.compute_scores:
             self.test_step_outputs = {}
             self.time_skip_steps_dict = {"encoder": 0, "decoder": 0}
-
+    
+    @rank_zero_only
     def training_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
         b, t, _ , h, w = batch["target"]["image"].shape
@@ -113,8 +114,9 @@ class ModelWrapper_KD(LightningModule):
         # --- Refinement Process ---
         mse_losses = []
         if self.refiner is not None:
+            psnr_impr , ssim_impr, lpips_impr = [], [], []
             for t_i in range(t):  # Iterate over target views
-                _, _ = self.refiner.forward(
+                psnr_improvement,ssim_improvement, lpips_improvement = self.refiner.forward(
                     {   
                         "extrinsics": batch['refinement']['extrinsics'][:, t_i],
                         "intrinsics": batch['refinement']['intrinsics'][:, t_i],
@@ -125,6 +127,9 @@ class ModelWrapper_KD(LightningModule):
                     gaussians, 
                     self.global_step
                 )
+                psnr_impr.append(psnr_improvement)
+                ssim_impr.append(ssim_improvement)
+                lpips_impr.append(lpips_improvement)
 
                 # Get the refined Gaussians
                 refined_gaussians = Gaussians(
@@ -148,10 +153,21 @@ class ModelWrapper_KD(LightningModule):
                 
         # Compute final loss (mean across target views)
         loss = torch.mean(torch.stack(mse_losses)) if mse_losses else torch.tensor(0.0, device=self.device)
-    
-        self.log("train_loss", loss, on_step=True)
-        wandb.log({"train_loss": loss.item()}, step=self.global_step)
         
+        final_psnr_impr = np.mean(psnr_impr)
+        final_ssim_impr = np.mean(ssim_impr)
+        final_lpips_impr = np.mean(lpips_impr)
+    
+        self.log("train_loss", loss, on_step=True, sync_dist=True)
+        self.logger.log_metrics({
+            "train/loss": loss.item(),
+            "train/psnr_improvement": final_psnr_impr,
+            "train/ssim_improvement": final_ssim_impr,
+            "train/lpips_improvement": final_lpips_impr
+        },
+        step=self.global_step)
+        # wandb.log({"train_loss": loss.item()}, step=int(self.trainer.global_step))
+
         return loss
 
     @rank_zero_only
@@ -160,47 +176,82 @@ class ModelWrapper_KD(LightningModule):
 
         if self.global_rank == 0:
             print(
-                f"validation step {self.global_step}; "
-                f"scene = {[a[:20] for a in batch['scene']]}; "
-                f"context = {batch['context']['index'].tolist()}"
+                f"Validation step {self.global_step}; "
+                f"Scene = {[a[:20] for a in batch['scene']]}; "
+                f"Context = {batch['context']['index'].tolist()}"
             )
 
-        # Render Gaussians.
-        b, _, _, h, w = batch["target"]["image"].shape
-        assert b == 1
-        gaussians_softmax = self.encoder(
+        # --- Get Original Gaussians (No Refinement) ---
+        b, t, _, h, w = batch["target"]["image"].shape
+        assert b == 1  # Single batch size
+        
+        gaussians = self.encoder(
             batch["context"],
             self.global_step,
             deterministic=False,
         )
-        output_softmax = self.decoder.forward(
-            gaussians_softmax,
-            batch["target"]["extrinsics"],
-            batch["target"]["intrinsics"],
-            batch["target"]["near"],
-            batch["target"]["far"],
-            (h, w),
+        original_gaussians = Gaussians(
+            means=gaussians.means.clone().detach(), 
+            harmonics=gaussians.harmonics.clone().detach(), 
+            opacities=gaussians.opacities.clone().detach(), 
+            scales=gaussians.scales.clone().detach(), 
+            rotations=gaussians.rotations.clone().detach(),
+            covariances=gaussians.covariances.clone().detach()
         )
-        rgb_softmax = output_softmax.color[0]
 
-        # Compute validation metrics.
-        rgb_gt = batch["target"]["image"][0]
-        for tag, rgb in zip(
-            ("val",), (rgb_softmax,)
-        ):
-            psnr = compute_psnr(rgb_gt, rgb).mean()
-            self.log(f"val/psnr_{tag}", psnr)
-            lpips = compute_lpips(rgb_gt, rgb).mean()
-            self.log(f"val/lpips_{tag}", lpips)
-            ssim = compute_ssim(rgb_gt, rgb).mean()
-            self.log(f"val/ssim_{tag}", ssim)
+        # --- Compute Splatting and Metrics for Each Target View ---
+        psnr_values = []
+        ssim_values = []
+        lpips_values = []
+        
+        rendered_images = []
+        
+        for t_i in range(t):  # Iterate over target views
+            output = self.decoder.forward(
+                gaussians=original_gaussians,
+                extrinsics=batch["target"]["extrinsics"][:, t_i].unsqueeze(1),
+                intrinsics=batch["target"]["intrinsics"][:, t_i].unsqueeze(1),
+                near=batch["target"]["near"][:, t_i].unsqueeze(1),
+                far=batch["target"]["far"][:, t_i].unsqueeze(1),
+                image_shape=(h, w),
+                depth_mode=None,
+                use_scale_and_rotation=True,
+            )
+            
+            rgb_splatted = output.color[0][0]  # Extract the rendered view
+            rendered_images.append(rgb_splatted)
 
-        # Construct comparison image.
+            # Ground truth target view
+            rgb_gt = batch["target"]["image"][0][t_i]
+
+            # Compute Metrics
+            psnr = compute_psnr(rgb_gt.unsqueeze(0), rgb_splatted.unsqueeze(0)).item()
+            ssim = compute_ssim(rgb_gt.unsqueeze(0), rgb_splatted.unsqueeze(0)).item()
+            lpips = compute_lpips(rgb_gt.unsqueeze(0), rgb_splatted.unsqueeze(0)).item()
+            
+            psnr_values.append(psnr)
+            ssim_values.append(ssim)
+            lpips_values.append(lpips)
+
+        # --- Compute Mean Metrics Across Target Views ---
+        psnr_mean = np.mean(psnr_values)
+        ssim_mean = np.mean(ssim_values)
+        lpips_mean = np.mean(lpips_values)
+
+        self.logger.log_metrics({
+            "val/psnr_mean": psnr_mean,
+            "val/ssim_mean": ssim_mean,
+            "val/lpips_mean": lpips
+            },
+        step=self.global_step)
+    
+        # --- Construct Comparison Image ---
         comparison = hcat(
             add_label(vcat(*batch["context"]["image"][0]), "Context"),
-            add_label(vcat(*rgb_gt), "Target (Ground Truth)"),
-            add_label(vcat(*rgb_softmax), "Target (Softmax)"),
+            add_label(vcat(*batch["target"]["image"][0]), "Target (GT)"),
+            add_label(vcat(*rendered_images), "Rendered (Original Gaussians)"),
         )
+
         self.logger.log_image(
             "comparison",
             [prep_image(add_border(comparison))],
@@ -208,11 +259,11 @@ class ModelWrapper_KD(LightningModule):
             caption=batch["scene"],
         )
 
-        # Render projections and construct projection image.
+        # --- Render Projections ---
         projections = hcat(*render_projections(
-                                gaussians_softmax,
+                                original_gaussians,
                                 256,
-                                extra_label="(Softmax)",
+                                extra_label="(Original Gaussians)",
                             )[0])
         self.logger.log_image(
             "projection",
@@ -220,200 +271,6 @@ class ModelWrapper_KD(LightningModule):
             step=self.global_step,
         )
 
-        # Draw cameras.
-        cameras = hcat(*render_cameras(batch, 256))
-        self.logger.log_image(
-            "cameras", [prep_image(add_border(cameras))], step=self.global_step
-        )
-
-        if self.encoder_visualizer is not None:
-            for k, image in self.encoder_visualizer.visualize(
-                batch["context"], self.global_step
-            ).items():
-                self.logger.log_image(k, [prep_image(image)], step=self.global_step)
-
-        # Run video validation step.
-        self.render_video_interpolation(batch)
-        self.render_video_wobble(batch)
-        if self.train_cfg.extended_visualization:
-            self.render_video_interpolation_exaggerated(batch)
-
-    @rank_zero_only
-    def render_video_wobble(self, batch: BatchedExample) -> None:
-        # Two views are needed to get the wobble radius.
-        _, v, _, _ = batch["context"]["extrinsics"].shape
-        if v != 2:
-            return
-
-        def trajectory_fn(t):
-            origin_a = batch["context"]["extrinsics"][:, 0, :3, 3]
-            origin_b = batch["context"]["extrinsics"][:, 1, :3, 3]
-            delta = (origin_a - origin_b).norm(dim=-1)
-            extrinsics = generate_wobble(
-                batch["context"]["extrinsics"][:, 0],
-                delta * 0.25,
-                t,
-            )
-            intrinsics = repeat(
-                batch["context"]["intrinsics"][:, 0],
-                "b i j -> b v i j",
-                v=t.shape[0],
-            )
-            return extrinsics, intrinsics
-
-        return self.render_video_generic(batch, trajectory_fn, "wobble", num_frames=60)
-
-    @rank_zero_only
-    def render_video_interpolation(self, batch: BatchedExample) -> None:
-        _, v, _, _ = batch["context"]["extrinsics"].shape
-
-        def trajectory_fn(t):
-            extrinsics = interpolate_extrinsics(
-                batch["context"]["extrinsics"][0, 0],
-                (
-                    batch["context"]["extrinsics"][0, 1]
-                    if v == 2
-                    else batch["target"]["extrinsics"][0, 0]
-                ),
-                t,
-            )
-            intrinsics = interpolate_intrinsics(
-                batch["context"]["intrinsics"][0, 0],
-                (
-                    batch["context"]["intrinsics"][0, 1]
-                    if v == 2
-                    else batch["target"]["intrinsics"][0, 0]
-                ),
-                t,
-            )
-            return extrinsics[None], intrinsics[None]
-
-        return self.render_video_generic(batch, trajectory_fn, "rgb")
-
-    @rank_zero_only
-    def render_video_interpolation_exaggerated(self, batch: BatchedExample) -> None:
-        # Two views are needed to get the wobble radius.
-        _, v, _, _ = batch["context"]["extrinsics"].shape
-        if v != 2:
-            return
-
-        def trajectory_fn(t):
-            origin_a = batch["context"]["extrinsics"][:, 0, :3, 3]
-            origin_b = batch["context"]["extrinsics"][:, 1, :3, 3]
-            delta = (origin_a - origin_b).norm(dim=-1)
-            tf = generate_wobble_transformation(
-                delta * 0.5,
-                t,
-                5,
-                scale_radius_with_t=False,
-            )
-            extrinsics = interpolate_extrinsics(
-                batch["context"]["extrinsics"][0, 0],
-                (
-                    batch["context"]["extrinsics"][0, 1]
-                    if v == 2
-                    else batch["target"]["extrinsics"][0, 0]
-                ),
-                t * 5 - 2,
-            )
-            intrinsics = interpolate_intrinsics(
-                batch["context"]["intrinsics"][0, 0],
-                (
-                    batch["context"]["intrinsics"][0, 1]
-                    if v == 2
-                    else batch["target"]["intrinsics"][0, 0]
-                ),
-                t * 5 - 2,
-            )
-            return extrinsics @ tf, intrinsics[None]
-
-        return self.render_video_generic(
-            batch,
-            trajectory_fn,
-            "interpolation_exagerrated",
-            num_frames=300,
-            smooth=False,
-            loop_reverse=False,
-        )
-
-    @rank_zero_only
-    def render_video_generic(
-        self,
-        batch: BatchedExample,
-        trajectory_fn: TrajectoryFn,
-        name: str,
-        num_frames: int = 30,
-        smooth: bool = True,
-        loop_reverse: bool = True,
-    ) -> None:
-        # Render probabilistic estimate of scene.
-        gaussians_prob = self.encoder(batch["context"], self.global_step, False)
-        # gaussians_det = self.encoder(batch["context"], self.global_step, True)
-
-        t = torch.linspace(0, 1, num_frames, dtype=torch.float32, device=self.device)
-        if smooth:
-            t = (torch.cos(torch.pi * (t + 1)) + 1) / 2
-
-        extrinsics, intrinsics = trajectory_fn(t)
-
-        _, _, _, h, w = batch["context"]["image"].shape
-
-        # Color-map the result.
-        def depth_map(result):
-            near = result[result > 0][:16_000_000].quantile(0.01).log()
-            far = result.view(-1)[:16_000_000].quantile(0.99).log()
-            result = result.log()
-            result = 1 - (result - near) / (far - near)
-            return apply_color_map_to_image(result, "turbo")
-
-        # TODO: Interpolate near and far planes?
-        near = repeat(batch["context"]["near"][:, 0], "b -> b v", v=num_frames)
-        far = repeat(batch["context"]["far"][:, 0], "b -> b v", v=num_frames)
-        output_prob = self.decoder.forward(
-            gaussians_prob, extrinsics, intrinsics, near, far, (h, w), "depth"
-        )
-        images_prob = [
-            vcat(rgb, depth)
-            for rgb, depth in zip(output_prob.color[0], depth_map(output_prob.depth[0]))
-        ]
-        # output_det = self.decoder.forward(
-        #     gaussians_det, extrinsics, intrinsics, near, far, (h, w), "depth"
-        # )
-        # images_det = [
-        #     vcat(rgb, depth)
-        #     for rgb, depth in zip(output_det.color[0], depth_map(output_det.depth[0]))
-        # ]
-        images = [
-            add_border(
-                hcat(
-                    add_label(image_prob, "Softmax"),
-                    # add_label(image_det, "Deterministic"),
-                )
-            )
-            for image_prob, _ in zip(images_prob, images_prob)
-        ]
-
-        video = torch.stack(images)
-        video = (video.clip(min=0, max=1) * 255).type(torch.uint8).cpu().numpy()
-        if loop_reverse:
-            video = pack([video, video[::-1][1:-1]], "* c h w")[0]
-        visualizations = {
-            f"video/{name}": wandb.Video(video[None], fps=30, format="mp4")
-        }
-
-        # Since the PyTorch Lightning doesn't support video logging, log to wandb directly.
-        # try:
-        #     wandb.log(visualizations)
-        # except Exception:
-        #     assert isinstance(self.logger, LocalLogger)
-        #     for key, value in visualizations.items():
-        #         tensor = value._prepare_video(value.data)
-        #         clip = mpy.ImageSequenceClip(list(tensor), fps=value._fps)
-        #         dir = LOG_PATH / key
-        #         dir.mkdir(exist_ok=True, parents=True)
-        #         clip.write_videofile(
-        #             str(dir / f"{self.global_step:0>6}.mp4"), logger=None
-        #         )
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.optimizer_cfg.lr)

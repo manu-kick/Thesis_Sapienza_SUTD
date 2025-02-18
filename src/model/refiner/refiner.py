@@ -171,20 +171,7 @@ class Refiner(nn.Module):
                 ssim_improvement_mean = np.mean(ssim_improvement_per_view)
                 lpips_improvement_mean = np.mean(lpips_improvement_per_view)
 
-                if self.debug or step % 10 == 0:
-                    print(f"📊 Mean PSNR Improvement: {psnr_improvement_mean:.3f}")
-                    print(f"📊 Mean SSIM Improvement: {ssim_improvement_mean:.3f}")
-                    print(f"📊 Mean LPIPS Improvement: {lpips_improvement_mean:.3f}")
-
-                # ✅ Log to WandB
-                if self.cfg.wandb_log:
-                    wandb.log({
-                        "Mean PSNR Improvement": psnr_improvement_mean,
-                        "Mean SSIM Improvement": ssim_improvement_mean,
-                        "Mean LPIPS Improvement": lpips_improvement_mean
-                    }, step=step)
-                    
-        return _, _
+        return psnr_improvement_mean, ssim_improvement_mean, lpips_improvement_mean
     
     def compute_loss(self, output, target):
         total_loss = torch.tensor(0.0, device=output.color.device, requires_grad=True)
