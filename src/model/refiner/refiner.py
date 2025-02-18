@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 from dataclasses import dataclass
 from typing import Literal
-
+import wandb
 
 @dataclass
 class RefinerCfg:
@@ -18,6 +18,8 @@ class RefinerCfg:
     patience: int = 15 # for the early stopping
     min_delta: float = 1e-4 # for the early stopping
     enable_early_stopping: bool = True # 🔥 Enable early stopping
+    wandb_log = True
+    
     
     
 lrs_HPO = { #coming from HPO
@@ -35,6 +37,7 @@ class Refiner(nn.Module):
         self.decoder = decoder
         self.losses = losses       
         self.lrs = lrs 
+        self.debug = False
         
     def initialize_parameters(self, gaussians):
         self.means = nn.Parameter(gaussians.means.clone().detach(), requires_grad=True)
@@ -75,27 +78,28 @@ class Refiner(nn.Module):
         ]
         return torch.optim.Adam(param_groups, eps=1e-15)
     
-    def forward(self, batch, gaussians, _):
+    def forward(self, batch, gaussians, step):
         with torch.inference_mode(False):  # 🔥 Force autograd to work
             with torch.enable_grad():  # ✅ Ensure gradients are enabled
                 self.initialize_parameters(gaussians)
                 self.optimizer = self.get_optimizer()
                 
                 # Batch contains a set of extrinsics, intrinsics, near, far and image
-                _,v,_,_ = batch['extrinsics'].shape
+                _, v, _, _ = batch['extrinsics'].shape
                 batch['near'] = repeat(batch['near'], 'b -> b v', v=v)
                 batch['far'] = repeat(batch['far'], 'b -> b v ', v=v)
-                
+
                 # 🔥 Early stopping variables
                 best_loss = float("inf")
                 patience_counter = 0
                 patience = self.cfg.patience
                 min_delta = self.cfg.min_delta
 
-                psnr_t0 = 0
-                ssim_t0 = 0
-                lpips_t0 = 0
-                for i in tqdm(range(1000), desc="Refinement Progress"):
+                psnr_t0 = []
+                ssim_t0 = []
+                lpips_t0 = []
+
+                for i in tqdm(range(1000), desc=f"Refinement Progress | Step {step}"):
                     # Update `gaussians` parameters from learnable parameters
                     gaussians.means = self.means
                     gaussians.harmonics = self.harmonics
@@ -103,7 +107,6 @@ class Refiner(nn.Module):
                     gaussians.scales = self.scales
                     gaussians.rotations = self.rotations
                     
-                
                     output = self.decoder.forward(
                         gaussians,
                         batch['extrinsics'],
@@ -115,32 +118,30 @@ class Refiner(nn.Module):
                         use_scale_and_rotation=True,
                     )
                         
-                    
                     total_loss = self.compute_loss(output, batch['image'])
                     total_loss.backward()
                     
-                    psnr_probabilistic = compute_psnr(
+                    # Compute Metrics
+                    psnr_per_view = compute_psnr(
                         rearrange(batch['image'], "b v c h w -> (b v) c h w"),
                         rearrange(output.color, "b v c h w -> (b v) c h w"),
                     )
                     
-                    ssim = compute_ssim(
+                    ssim_per_view = compute_ssim(
                         rearrange(batch['image'], "b v c h w -> (b v) c h w"),
                         rearrange(output.color, "b v c h w -> (b v) c h w"),
                     )
                     
-                    lpips = compute_lpips(
+                    lpips_per_view = compute_lpips(
                         rearrange(batch['image'], "b v c h w -> (b v) c h w"),
                         rearrange(output.color, "b v c h w -> (b v) c h w"),
                     )
                     
-                    
-                    if i == 0:
-                        psnr_t0 = psnr_probabilistic.mean().item()
-                        ssim_t0 = ssim.mean().item()
-                        lpips_t0 = lpips.mean().item()
+                    if i == 0:  # Save initial values
+                        psnr_t0 = psnr_per_view.tolist()
+                        ssim_t0 = ssim_per_view.tolist()
+                        lpips_t0 = lpips_per_view.tolist()
                         
-
                     with torch.no_grad():
                         self.optimizer.step()
                         self.optimizer.zero_grad(set_to_none=True)
@@ -156,17 +157,34 @@ class Refiner(nn.Module):
 
                         # 🔥 Stop if no improvement for `patience` steps
                         if patience_counter >= patience:
-                            print(f"🛑 Early stopping at step {i}, best loss: {best_loss:.6f}")
+                            if self.debug:
+                                print(f"🛑 Early stopping at step {i}, best loss: {best_loss:.6f}")
                             break
 
-                
-                psnr_final = psnr_probabilistic.mean().item() # One value for each refinement view
-                ssim_final = ssim.mean().item()
-                lpips_final = lpips.mean().item()
-                print(f"PSNR: {psnr_final:.3f} | SSIM: {ssim_final:.3f} | LPIPS: {lpips_final:.3f}")
-                print(f"PSNR Improvement: {psnr_final - psnr_t0:.3f} | SSIM Improvement: {ssim_final - ssim_t0:.3f} | LPIPS Improvement: {lpips_final - lpips_t0:.3f}")
-                
-        return psnr_probabilistic, total_loss
+                # Compute Improvement (Final - Initial)
+                psnr_improvement_per_view = [psnr_f - psnr_0 for psnr_f, psnr_0 in zip(psnr_per_view.tolist(), psnr_t0)]
+                ssim_improvement_per_view = [ssim_f - ssim_0 for ssim_f, ssim_0 in zip(ssim_per_view.tolist(), ssim_t0)]
+                lpips_improvement_per_view = [lpips_f - lpips_0 for lpips_f, lpips_0 in zip(lpips_per_view.tolist(), lpips_t0)]
+
+                # Compute Mean Improvement Across Views
+                psnr_improvement_mean = np.mean(psnr_improvement_per_view)
+                ssim_improvement_mean = np.mean(ssim_improvement_per_view)
+                lpips_improvement_mean = np.mean(lpips_improvement_per_view)
+
+                if self.debug or step % 10 == 0:
+                    print(f"📊 Mean PSNR Improvement: {psnr_improvement_mean:.3f}")
+                    print(f"📊 Mean SSIM Improvement: {ssim_improvement_mean:.3f}")
+                    print(f"📊 Mean LPIPS Improvement: {lpips_improvement_mean:.3f}")
+
+                # ✅ Log to WandB
+                if self.cfg.wandb_log:
+                    wandb.log({
+                        "Mean PSNR Improvement": psnr_improvement_mean,
+                        "Mean SSIM Improvement": ssim_improvement_mean,
+                        "Mean LPIPS Improvement": lpips_improvement_mean
+                    }, step=step)
+                    
+        return _, _
     
     def compute_loss(self, output, target):
         total_loss = torch.tensor(0.0, device=output.color.device, requires_grad=True)

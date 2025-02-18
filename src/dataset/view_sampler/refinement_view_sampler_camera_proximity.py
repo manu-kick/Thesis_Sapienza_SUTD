@@ -28,22 +28,22 @@ class RefinementViewSamplerCameraProximity(ViewSampler[RefinementViewSamplerCame
         extrinsics_inv = extrinsics.inverse()  # Convert world-to-camera to camera-to-world
         cam_positions = extrinsics_inv[:, :3, 3]  # Extract camera positions [num_views, 3]
 
-        if self.stage == "test":
-            # Compute pairwise distances between camera positions
-            distances = torch.cdist(cam_positions, cam_positions, p=2)  # Euclidean distance [num_views, num_views]
+        
+        # Compute pairwise distances between camera positions
+        distances = torch.cdist(cam_positions, cam_positions, p=2)  # Euclidean distance [num_views, num_views]
 
-            refinement_indices = []
-            for i in target_indices.tolist():
-                sorted_indices = torch.argsort(distances[i])  # Sort views by closest distance
-                closest_views = sorted_indices[0:self.cfg.num_refinement_views ]  
-                refinement_indices.append(closest_views)
+        refinement_indices = []
+        for i in target_indices.tolist():
+            sorted_indices = torch.argsort(distances[i])  # Sort views by closest distance
+            if str(sorted_indices[0].item()) == str(i):
+                closest_views = sorted_indices[1:self.cfg.num_refinement_views + 1]  # Exclude the target view (training)
+            else:
+                closest_views = sorted_indices[0:self.cfg.num_refinement_views]  
+            refinement_indices.append(closest_views)
 
-            refinement_indices = torch.stack(refinement_indices)  # Convert to tensor
+        refinement_indices = torch.stack(refinement_indices)  # Convert to tensor
 
-            return refinement_indices.to(device)
-
-        else:
-            raise NotImplementedError("Training and validation are not implemented yet")
+        return refinement_indices.to(device)
 
     
 
