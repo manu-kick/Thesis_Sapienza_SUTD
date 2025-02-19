@@ -1,5 +1,5 @@
 defaults:
-  - view_sampler: evaluation # bounded, evaluation
+  - view_sampler: bounded # bounded, evaluation
 
 
 name: re10k

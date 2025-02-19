@@ -100,7 +100,7 @@ class Refiner(nn.Module):
                 ssim_t0 = []
                 lpips_t0 = []
 
-                for i in tqdm(range(10), desc=f"Refinement Progress | Step {step}"):
+                for i in tqdm(range(1000), desc=f"Refinement Progress | Step {step}"):
                     # Update `gaussians` parameters from learnable parameters
                     splat_gaussians = Gaussians(
                         means=self.means, 

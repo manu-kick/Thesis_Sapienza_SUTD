@@ -18,18 +18,17 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: KD_1
-  mode: disabled 
+  name: KD_re10k
+  mode: online 
   id: null
 
-mode: test #  here train means knowledge distillation 
-enable_refinement: false
+mode: train #  here train means knowledge distillation 
+enable_refinement: true
 
 dataset:
   overfit_to_scene: null
   view_sampler:
     index_path: assets/evaluation_index_re10k.json
-    # index_path: assets/evaluation_index_basketball_nctx2.json
 
 data_loader:
   # Avoid having to spin up new processes to print out visualizations.
@@ -55,8 +54,7 @@ optimizer:
   cosine_lr: true
 
 checkpointing:
-  # load: checkpoints/re10k.ckpt
-  load: outputs/2025-02-19/18-28-44/checkpoints/best_val_psnr.ckpt
+  load: checkpoints/re10k.ckpt
   every_n_train_steps: 10  # 5000
   save_top_k: -1
   pretrained_model: null
