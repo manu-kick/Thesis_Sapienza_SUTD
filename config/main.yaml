@@ -59,7 +59,7 @@ checkpointing:
   every_n_train_steps: 20000  # 5000
   save_top_k: -1
   pretrained_model: null
-  resume: true
+  resume: false
 
 train:
   depth_mode: null

@@ -218,16 +218,13 @@ class ModelWrapper(LightningModule):
             )
             
         if self.refiner is not None:
-            psnr_per_view = []
-            ssim_per_view = []
-            lpips_per_view = []
-            psnr_per_view_refiner = []
-            ssim_per_view_refiner = []
-            lpips_per_view_refiner = []
+            psnr_per_view, ssim_per_view, lpips_per_view = [], [], []
+            psnr_per_view_refiner ,ssim_per_view_refiner ,lpips_per_view_refiner = [], [], []
+            psnr_impr , ssim_impr, lpips_impr = [], [], []
             
             for t_i in range(t):  # Iterate over target views
                 # Forward the data through the refiner for the given target view
-                _, _ = self.refiner.forward(
+                psnr_improvement,ssim_improvement, lpips_improvement = self.refiner.forward(
                     {   
                         "extrinsics": batch['refinement']['extrinsics'][:, t_i],
                         "intrinsics": batch['refinement']['intrinsics'][:, t_i],
@@ -238,6 +235,10 @@ class ModelWrapper(LightningModule):
                     gaussians, 
                     self.global_step
                 )
+                psnr_impr.append(psnr_improvement)
+                ssim_impr.append(ssim_improvement)
+                lpips_impr.append(lpips_improvement)
+                
                 # get the refined gaussians for the target view
                 refined_gaussians_i = Gaussians(
                     means=self.refiner.means.detach(), 
@@ -258,6 +259,7 @@ class ModelWrapper(LightningModule):
                     depth_mode=None,
                     use_scale_and_rotation=True,
                 )
+                
                     
                 (scene,) = batch["scene"]
                 name = get_cfg()["wandb"]["name"]
@@ -310,6 +312,12 @@ class ModelWrapper(LightningModule):
                         idx += 1
                         if self.refiner is not None: # TODO and save metrics
                             Image.fromarray((rgb_refiner[0] * 255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(path / scene / f"color/refined_{index:0>6}.png")
+            
+            # Print the improvement metrics
+            if self.refiner is not None:
+                print(f"PSNR improvement batch {batch_idx}: {np.mean(psnr_impr)}")
+                print(f"SSIM improvement batch {batch_idx}: {np.mean(ssim_impr)}")
+                print(f"LPIPS improvement batch {batch_idx}: {np.mean(lpips_impr)}")
             
             
         # save video

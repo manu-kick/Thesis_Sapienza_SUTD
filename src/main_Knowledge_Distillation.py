@@ -89,17 +89,29 @@ def train(cfg_dict: DictConfig):
     else:
         logger = LocalLogger()
 
-    # Set up checkpointing.
+    # Set up checkpointing: Keep only the best 2 models for each metric and overwrite old ones
     callbacks.append(
         ModelCheckpoint(
-            output_dir / "checkpoints",
-            every_n_train_steps=cfg.checkpointing.every_n_train_steps,
-            save_top_k=cfg.checkpointing.save_top_k,
+            dirpath=output_dir / "checkpoints",
+            save_top_k=2,  # Keep only the top 2 models for this metric
             monitor="train_loss",
-            mode="min",  # Lower is better.
-            auto_insert_metric_name=True
+            mode="min",  # Lower train loss is better
+            auto_insert_metric_name=False,  # Prevent auto metric name insertion
+            filename="best_train_loss",  # Static name ensures overwriting
         )
     )
+
+    callbacks.append(
+        ModelCheckpoint(
+            dirpath=output_dir / "checkpoints",
+            save_top_k=2,  # Keep only the top 2 models for this metric
+            monitor="val/psnr_mean",
+            mode="max",  # Higher PSNR is better
+            auto_insert_metric_name=False,  # Prevent auto metric name insertion
+            filename="best_val_psnr",  # Static name ensures overwriting
+        )
+    )
+
     for cb in callbacks:
         cb.CHECKPOINT_EQUALS_CHAR = '_'
 
@@ -151,10 +163,7 @@ def train(cfg_dict: DictConfig):
     }
         
    
-    model_wrapper = ModelWrapper_KD.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=True)
-    print(cyan(f"Loaded weigths from {checkpoint_path}."))
-
-    model_wrapper = ModelWrapper_KD(**model_kwargs)
+   
 
     data_module = DataModule(
         cfg.dataset,
@@ -164,9 +173,28 @@ def train(cfg_dict: DictConfig):
     )
 
     if cfg.mode == "train":
+        model_wrapper = ModelWrapper_KD.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
+        print(cyan(f"Loaded weigths from {checkpoint_path}."))
+
+        model_wrapper = ModelWrapper_KD(**model_kwargs)
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=None)
     else:
-        raise NotImplementedError("Test not implemented yet")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+        # Remove unwanted keys from state_dict
+        ignored_keys = {"refiner.means", "refiner.harmonics", "refiner.opacities", "refiner.scales", "refiner.rotations"}
+        filtered_state_dict = {k: v for k, v in checkpoint["state_dict"].items() if k not in ignored_keys}
+
+        # Load the model with the filtered state_dict
+        model_wrapper = ModelWrapper_KD.load_from_checkpoint(
+            checkpoint_path,
+            **model_kwargs,
+            strict=False  # Allows missing keys without error
+        )
+
+        # Manually load the filtered state_dict to avoid unexpected keys
+        model_wrapper.load_state_dict(filtered_state_dict, strict=False)
+
         trainer.test(
             model_wrapper,
             datamodule=data_module,

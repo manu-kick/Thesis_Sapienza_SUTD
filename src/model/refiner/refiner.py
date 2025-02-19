@@ -10,6 +10,7 @@ from PIL import Image
 from dataclasses import dataclass
 from typing import Literal
 import wandb
+from src.model.types import Gaussians
 
 @dataclass
 class RefinerCfg:
@@ -99,16 +100,18 @@ class Refiner(nn.Module):
                 ssim_t0 = []
                 lpips_t0 = []
 
-                for i in tqdm(range(1000), desc=f"Refinement Progress | Step {step}"):
+                for i in tqdm(range(10), desc=f"Refinement Progress | Step {step}"):
                     # Update `gaussians` parameters from learnable parameters
-                    gaussians.means = self.means
-                    gaussians.harmonics = self.harmonics
-                    gaussians.opacities = self.opacities
-                    gaussians.scales = self.scales
-                    gaussians.rotations = self.rotations
-                    
+                    splat_gaussians = Gaussians(
+                        means=self.means, 
+                        harmonics=self.harmonics, 
+                        opacities=self.opacities, 
+                        scales=self.scales, 
+                        rotations=self.rotations,
+                        covariances=None  # We use scales and rotations
+                    )
                     output = self.decoder.forward(
-                        gaussians,
+                        splat_gaussians,
                         batch['extrinsics'],
                         batch['intrinsics'],
                         batch['near'],

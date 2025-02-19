@@ -19,11 +19,11 @@ wandb:
   project: MV_Thesis
   entity: rucci-2053183
   name: KD_1
-  mode: online
+  mode: disabled 
   id: null
 
-mode: train #  here train means knowledge distillation 
-enable_refinement: true
+mode: test #  here train means knowledge distillation 
+enable_refinement: false
 
 dataset:
   overfit_to_scene: null
@@ -39,7 +39,7 @@ data_loader:
     batch_size: 1
     seed: 1234
   test:
-    num_workers: 4
+    num_workers: 1
     persistent_workers: false
     batch_size: 1
     seed: 2345
@@ -55,7 +55,8 @@ optimizer:
   cosine_lr: true
 
 checkpointing:
-  load: checkpoints/re10k.ckpt
+  # load: checkpoints/re10k.ckpt
+  load: outputs/2025-02-19/18-28-44/checkpoints/best_val_psnr.ckpt
   every_n_train_steps: 10  # 5000
   save_top_k: -1
   pretrained_model: null
