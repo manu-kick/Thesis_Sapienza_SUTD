@@ -7,7 +7,7 @@ from .types import Stage
 from .view_sampler import get_view_sampler
 from .view_sampler.refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximityCfg
 from .view_sampler.refinement_view_sampler_context import RefinementViewSamplerContextCfg
-from .view_sampler.refinement_view_sampler_camera_K_E import RefinementViewSamplerCameraKECfg
+from .view_sampler.refinement_view_sampler_camera_R_t import RefinementViewSamplerCameraRtCfg
 from .view_sampler.refinement_view_sampler_random import RefinementViewSamplerRandomCfg
 
 DATASETS: dict[str, Dataset] = {
@@ -46,8 +46,8 @@ def get_dataset(
                 refinement_cfg = RefinementViewSamplerCameraProximityCfg(**refinement_cfg_dict)
             elif refinement_cfg_dict["name"] == "refinement_context":
                 refinement_cfg = RefinementViewSamplerContextCfg(**refinement_cfg_dict)
-            elif refinement_cfg_dict["name"] == "refinement_camera_K_E":
-                refinement_cfg = RefinementViewSamplerCameraKECfg(**refinement_cfg_dict)
+            elif refinement_cfg_dict["name"] == "refinement_camera_R_t":
+                refinement_cfg = RefinementViewSamplerCameraRtCfg(**refinement_cfg_dict)
             elif refinement_cfg_dict["name"] == "refinement_random":
                 refinement_cfg = RefinementViewSamplerRandomCfg(**refinement_cfg_dict)
             else:

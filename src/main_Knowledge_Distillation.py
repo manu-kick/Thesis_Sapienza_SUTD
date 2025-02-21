@@ -162,9 +162,6 @@ def train(cfg_dict: DictConfig):
         "step_tracker": step_tracker,
     }
         
-   
-   
-
     data_module = DataModule(
         cfg.dataset,
         cfg.data_loader,

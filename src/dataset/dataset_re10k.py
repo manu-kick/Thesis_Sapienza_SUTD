@@ -93,6 +93,7 @@ class DatasetRE10k(IterableDataset):
         if self.cfg.overfit_to_scene is not None:
             chunk_path = self.index[self.cfg.overfit_to_scene]
             self.chunks = [chunk_path] * len(self.chunks)
+            
         if self.stage == "test":
             # NOTE: hack to skip some chunks in testing during training, but the index
             # is not change, this should not cause any problem except for the display
@@ -220,9 +221,6 @@ class DatasetRE10k(IterableDataset):
                 nf_scale = scale if self.cfg.baseline_scale_bounds else 1.0
                 target_count = target_indices.shape[0]
                 refinement_count = self.cfg.refinement_cfg['num_refinement_views'] if self.cfg.refinement_cfg['name'] != "refinement_context" else refinement_indices.shape[1]
-                
-                #Near and far tensors
-                
                 
                 example = {
                     "context": {

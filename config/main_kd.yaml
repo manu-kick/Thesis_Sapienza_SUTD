@@ -18,12 +18,12 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: KD_re10k
+  name: Mv_Freezed
   mode: online 
   id: null
 
 mode: train #  here train means knowledge distillation 
-enable_refinement: true
+enable_refinement: false
 
 dataset:
   overfit_to_scene: null
@@ -55,6 +55,11 @@ optimizer:
 
 checkpointing:
   load: checkpoints/re10k.ckpt
+  # load: outputs/2025-02-20/18-50-57/checkpoints/best_train_loss-v1.ckpt
+  # load: outputs/2025-02-20/18-50-57/checkpoints/best_val_psnr.ckpt
+  # load: outputs/2025-02-20/18-50-57/checkpoints/best_val_psnr.ckpt
+  # load: outputs/2025-02-20/18-50-57/checkpoints/best_train_loss.ckpt
+  # load: outputs/2025-02-20/18-50-57/checkpoints/best_val_psnr-v1.ckpt
   every_n_train_steps: 10  # 5000
   save_top_k: -1
   pretrained_model: null

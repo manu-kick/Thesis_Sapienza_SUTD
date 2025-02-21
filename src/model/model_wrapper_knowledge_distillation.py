@@ -103,50 +103,42 @@ class ModelWrapper_KD(LightningModule):
             deterministic=False,
         )
         
-        # Save and detach before any modification
-        original_gaussians = Gaussians(
-            means=gaussians.means.clone().detach(),
-            harmonics=gaussians.harmonics.clone().detach(),
-            opacities=gaussians.opacities.clone().detach(),
-            scales=gaussians.scales.clone().detach(),
-            rotations=gaussians.rotations.clone().detach(),
-            covariances=gaussians.covariances.clone().detach()
-        )
-        
-        # Repeat
-        gaussians = Gaussians(
-            means=repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=t), # bs,g,3
-            harmonics=repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=t), # bs,g,3,25
-            opacities=repeat(gaussians.opacities, "b g -> (b v) g", v=t),  # bs,g
-            scales=repeat(gaussians.scales, "b g xyz-> (b v) g xyz", v=t), # bs,g,3
-            rotations=repeat(gaussians.rotations, "b g xyzw -> (b v) g xyzw", v=t), # bs,g,4
-            covariances=repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=t),
-        ) 
-        
-        output_mv = self.decoder.forward(
-            gaussians=original_gaussians,
-            extrinsics=batch["target"]["extrinsics"],
-            intrinsics=batch["target"]["intrinsics"],
-            near=batch["target"]["near"],
-            far=batch["target"]["far"],
-            image_shape=(h, w),
-            depth_mode=None,
-            use_scale_and_rotation=True,
-        ) # color has shape (b,t,c,h,w)
-        
-        # Rearrange the batch refinment data from batch target ref_views ... to 
-        _, _, r , _, _= batch['refinement']['extrinsics'].shape
-        batch['refinement']['extrinsics'] = rearrange(batch['refinement']['extrinsics'], "b t r i j -> (b t) r i j", r=r) 
-        batch['refinement']['intrinsics'] = rearrange(batch['refinement']['intrinsics'], "b t r i j -> (b t) r i j", r=r)
-        batch['refinement']['image'] = rearrange(batch['refinement']['image'], "b t r c h w -> (b t) r c h w", r=r)
-        batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b t -> (b t) ")
-        batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b t -> (b t)")
-        
-        
-        
+       
+ 
         # --- Refinement Process ---
         mse_losses = []
         if self.refiner is not None:
+            output_mv = self.decoder.forward(
+                gaussians=gaussians, # use the gaussians from the encoder (keep the gradient)
+                extrinsics=batch["target"]["extrinsics"],
+                intrinsics=batch["target"]["intrinsics"],
+                near=batch["target"]["near"],
+                far=batch["target"]["far"],
+                image_shape=(h, w),
+                depth_mode=None,
+                use_scale_and_rotation=True,
+            ) # color has shape (b,t,c,h,w)
+            
+            
+            # Repeat
+            gaussians = Gaussians(
+                means=repeat(gaussians.means, "b g xyz -> (b v) g xyz", v=t), # bs,g,3
+                harmonics=repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=t), # bs,g,3,25
+                opacities=repeat(gaussians.opacities, "b g -> (b v) g", v=t),  # bs,g
+                scales=repeat(gaussians.scales, "b g xyz-> (b v) g xyz", v=t), # bs,g,3
+                rotations=repeat(gaussians.rotations, "b g xyzw -> (b v) g xyzw", v=t), # bs,g,4
+                covariances=repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=t),
+            ) 
+            
+            
+            # Rearrange the batch refinment data from batch target ref_views ... to 
+            _, _, r , _, _= batch['refinement']['extrinsics'].shape
+            batch['refinement']['extrinsics'] = rearrange(batch['refinement']['extrinsics'], "b t r i j -> (b t) r i j", r=r) 
+            batch['refinement']['intrinsics'] = rearrange(batch['refinement']['intrinsics'], "b t r i j -> (b t) r i j", r=r)
+            batch['refinement']['image'] = rearrange(batch['refinement']['image'], "b t r c h w -> (b t) r c h w", r=r)
+            batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b t -> (b t) ")
+            batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b t -> (b t)")    
+        
             psnr_impr , ssim_impr, lpips_impr = [], [], []
             for t_i in range(b*t):  # Iterate over target views spread across batches
                 current_target_gaussians = Gaussians(
@@ -192,38 +184,105 @@ class ModelWrapper_KD(LightningModule):
                 ) 
                 mse_losses.append(mse_loss)
                 
-        # Compute final loss (mean across target views flatten wrt batch)
-        loss = torch.mean(torch.stack(mse_losses)) if mse_losses else torch.tensor(0.0, device=self.device)
-        
-        final_psnr_impr = np.mean(psnr_impr)
-        final_ssim_impr = np.mean(ssim_impr)
-        final_lpips_impr = np.mean(lpips_impr)
-        psnr_mv = compute_psnr(
-            rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
-            rearrange(output_mv.color, "b v c h w -> (b v) c h w"),
-        ).mean().item()
-        ssim_mv = compute_ssim(
-            rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
-            rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
-        ).mean().item()
-        lpips_mv = compute_lpips(
-            rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
-            rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
-        ).mean().item()
-        
-        self.log("train_loss", loss, on_step=True, sync_dist=True)
-        self.logger.log_metrics({
-            "train/loss": loss.item(),
-            "train/psnr_improvement": final_psnr_impr,
-            "train/ssim_improvement": final_ssim_impr,
-            "train/lpips_improvement": final_lpips_impr,
-            "train/psnr_mean": psnr_mv,
-            "train/ssim_mean": ssim_mv,
-            "train/lpips_mean": lpips_mv
-        },
-        step=self.global_step)
+            # Compute final loss (mean across target views flatten wrt batch)
+            raw_ref_loss = torch.mean(torch.stack(mse_losses)) if mse_losses else torch.tensor(0.0, device=self.device)
+            total_loss = raw_ref_loss
+            student_loss = 0
+            for loss_fn in self.losses:
+                loss_i = loss_fn.forward(output_mv, batch, gaussians, self.global_step)
+                self.logger.log_metrics({
+                    f"train/stud/{loss_fn.name}": loss_i.item()
+                },
+                step=self.global_step
+                )
+                student_loss = student_loss + loss_i
+            total_loss += student_loss
+            
+            final_psnr_impr = np.mean(psnr_impr)
+            final_ssim_impr = np.mean(ssim_impr)
+            final_lpips_impr = np.mean(lpips_impr)
+            psnr_mv = compute_psnr(
+                rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
+                rearrange(output_mv.color, "b v c h w -> (b v) c h w"),
+            ).mean().item()
+            ssim_mv = compute_ssim(
+                rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+                rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
+            ).mean().item()
+            lpips_mv = compute_lpips(
+                rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+                rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
+            ).mean().item()
+            
+            self.log("train_loss", total_loss, on_step=True, sync_dist=True)
+            self.logger.log_metrics({
+                "train/loss": total_loss.item(),
+                "train/psnr_improvement": final_psnr_impr,
+                "train/ssim_improvement": final_ssim_impr,
+                "train/lpips_improvement": final_lpips_impr,
+                "train/psnr_mean": psnr_mv,
+                "train/ssim_mean": ssim_mv,
+                "train/lpips_mean": lpips_mv,
+                "train/student_loss": student_loss.item(),
+            },
+            step=self.global_step)
 
-        return loss
+            return total_loss
+        else: # simulate the training of mv splat to see how performs over the val set
+            # Save and detach before any modification
+            original_gaussians = Gaussians(
+                means=gaussians.means.clone().detach(),
+                harmonics=gaussians.harmonics.clone().detach(),
+                opacities=gaussians.opacities.clone().detach(),
+                scales=gaussians.scales.clone().detach(),
+                rotations=gaussians.rotations.clone().detach(),
+                covariances=gaussians.covariances.clone().detach()
+            )
+            
+            output_mv = self.decoder.forward(
+                gaussians=original_gaussians, # use the gaussians from the encoder (keep the gradient)
+                extrinsics=batch["target"]["extrinsics"],
+                intrinsics=batch["target"]["intrinsics"],
+                near=batch["target"]["near"],
+                far=batch["target"]["far"],
+                image_shape=(h, w),
+                depth_mode=None,
+                use_scale_and_rotation=True,
+            ) # color has shape (b,t,c,h,w)
+            
+            psnr_mean = compute_psnr(
+                rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
+                rearrange(output_mv.color, "b v c h w -> (b v) c h w"),
+            ).mean().item()
+            ssim_mean = compute_ssim(
+                rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+                rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
+            ).mean().item()
+            lpips_mean = compute_lpips(
+                rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+                rearrange(output_mv.color,"b v c h w -> (b v) c h w"),
+            ).mean().item()
+            
+            total_loss =0
+            for loss_fn in self.losses:
+                loss_i = loss_fn.forward(output_mv, batch, gaussians, self.global_step)
+                self.logger.log_metrics({
+                    f"train/stud/{loss_fn.name}": loss_i.item()
+                },
+                step=self.global_step
+                )
+                total_loss += loss_i
+            self.log("train_loss", total_loss, on_step=True, sync_dist=True)
+            self.logger.log_metrics({
+                "train/loss": total_loss.item(),
+                "train/psnr_mean": psnr_mean,
+                "train/ssim_mean": ssim_mean,
+                "train/lpips_mean": lpips_mean
+            },
+            step=self.global_step)
+            
+            return None #only perform inference
+            
 
     @rank_zero_only
     def validation_step(self, batch, batch_idx):
@@ -254,44 +313,31 @@ class ModelWrapper_KD(LightningModule):
             covariances=gaussians.covariances.clone().detach()
         )
 
-        # --- Compute Splatting and Metrics for Each Target View ---
-        psnr_values = []
-        ssim_values = []
-        lpips_values = []
-        
-        rendered_images = []
-        
-        for t_i in range(t):  # Iterate over target views
-            output = self.decoder.forward(
-                gaussians=original_gaussians,
-                extrinsics=batch["target"]["extrinsics"][:, t_i].unsqueeze(1),
-                intrinsics=batch["target"]["intrinsics"][:, t_i].unsqueeze(1),
-                near=batch["target"]["near"][:, t_i].unsqueeze(1),
-                far=batch["target"]["far"][:, t_i].unsqueeze(1),
-                image_shape=(h, w),
-                depth_mode=None,
-                use_scale_and_rotation=True,
-            )
+      
+        output = self.decoder.forward(
+            gaussians=original_gaussians,
+            extrinsics=batch["target"]["extrinsics"],
+            intrinsics=batch["target"]["intrinsics"],
+            near=batch["target"]["near"],
+            far=batch["target"]["far"],
+            image_shape=(h, w),
+            depth_mode=None,
+            use_scale_and_rotation=True,
+        )
             
-            rgb_splatted = output.color[0][0]  # Extract the rendered view
-            rendered_images.append(rgb_splatted)
-
-            # Ground truth target view
-            rgb_gt = batch["target"]["image"][0][t_i]
-
-            # Compute Metrics
-            psnr = compute_psnr(rgb_gt.unsqueeze(0), rgb_splatted.unsqueeze(0)).item()
-            ssim = compute_ssim(rgb_gt.unsqueeze(0), rgb_splatted.unsqueeze(0)).item()
-            lpips = compute_lpips(rgb_gt.unsqueeze(0), rgb_splatted.unsqueeze(0)).item()
+        psnr_mean = compute_psnr(
+            rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
+            rearrange(output.color, "b v c h w -> (b v) c h w"),
+        ).mean().item()
+        ssim_mean = compute_ssim(
+            rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+            rearrange(output.color,"b v c h w -> (b v) c h w"),
+        ).mean().item()
+        lpips_mean = compute_lpips(
+            rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
+            rearrange(output.color,"b v c h w -> (b v) c h w"),
+        ).mean().item()
             
-            psnr_values.append(psnr)
-            ssim_values.append(ssim)
-            lpips_values.append(lpips)
-
-        # --- Compute Mean Metrics Across Target Views ---
-        psnr_mean = np.mean(psnr_values)
-        ssim_mean = np.mean(ssim_values)
-        lpips_mean = np.mean(lpips_values)
 
         self.logger.log_metrics({
             "val/psnr_mean": psnr_mean,
@@ -301,32 +347,6 @@ class ModelWrapper_KD(LightningModule):
         step=self.global_step)
         
         self.log("val/psnr_mean", psnr_mean, sync_dist=True)
-    
-        # --- Construct Comparison Image ---
-        comparison = hcat(
-            add_label(vcat(*batch["context"]["image"][0]), "Context"),
-            add_label(vcat(*batch["target"]["image"][0]), "Target (GT)"),
-            add_label(vcat(*rendered_images), "Rendered (Original Gaussians)"),
-        )
-
-        self.logger.log_image(
-            "comparison",
-            [prep_image(add_border(comparison))],
-            step=self.global_step,
-            caption=batch["scene"],
-        )
-
-        # --- Render Projections ---
-        projections = hcat(*render_projections(
-                                original_gaussians,
-                                256,
-                                extra_label="(Original Gaussians)",
-                            )[0])
-        self.logger.log_image(
-            "projection",
-            [prep_image(add_border(projections))],
-            step=self.global_step,
-        )
 
     def test_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
