@@ -13,6 +13,7 @@ class RefinementViewSamplerCameraProximityCfg:
     name: Literal["refinement_camera_proximity"]
     index_path: str # actually not useful here because we compute the indices directly
     num_refinement_views: int
+    random_target_selection: bool = False
 
 
 class RefinementViewSamplerCameraProximity(ViewSampler[RefinementViewSamplerCameraProximityCfg]):

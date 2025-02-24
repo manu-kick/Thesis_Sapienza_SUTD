@@ -18,12 +18,13 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: Mv_Freezed
+  name: Mv_KD_ImagesLoss
   mode: online 
   id: null
 
 mode: train #  here train means knowledge distillation 
-enable_refinement: false
+enable_refinement: true
+
 
 dataset:
   overfit_to_scene: null

@@ -37,7 +37,7 @@ class LossLpips(Loss[LossLpipsCfg, LossLpipsCfgWrapper]):
         self,
         prediction: DecoderOutput,
         batch: BatchedExample,
-        gaussians: Gaussians,
+        gaussians: Gaussians | None,
         global_step: int,
     ) -> Float[Tensor, ""]:
         image = batch["target"]["image"]

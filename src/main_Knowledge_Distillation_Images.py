@@ -35,7 +35,7 @@ with install_import_hook(
     from src.model.decoder import get_decoder
     from src.model.encoder import get_encoder
     from src.model.refiner import get_refiner
-    from src.model.model_wrapper_knowledge_distillation import ModelWrapper_KD
+    from src.model.model_wrapper_knowledge_distillation_images import ModelWrapper_KD_IMGS
 
 
 def cyan(text: str) -> str:
@@ -171,10 +171,10 @@ def train(cfg_dict: DictConfig):
     )
 
     if cfg.mode == "train":
-        model_wrapper = ModelWrapper_KD.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
+        model_wrapper = ModelWrapper_KD_IMGS.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
         print(cyan(f"Loaded weigths from {checkpoint_path}."))
 
-        model_wrapper = ModelWrapper_KD(**model_kwargs)
+        model_wrapper = ModelWrapper_KD_IMGS(**model_kwargs)
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=None)
     else:
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -184,7 +184,7 @@ def train(cfg_dict: DictConfig):
         filtered_state_dict = {k: v for k, v in checkpoint["state_dict"].items() if k not in ignored_keys}
 
         # Load the model with the filtered state_dict
-        model_wrapper = ModelWrapper_KD.load_from_checkpoint(
+        model_wrapper = ModelWrapper_KD_IMGS.load_from_checkpoint(
             checkpoint_path,
             **model_kwargs,
             strict=False  # Allows missing keys without error

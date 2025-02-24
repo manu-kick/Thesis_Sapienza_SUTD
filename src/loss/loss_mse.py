@@ -24,7 +24,7 @@ class LossMse(Loss[LossMseCfg, LossMseCfgWrapper]):
         self,
         prediction: DecoderOutput,
         batch: BatchedExample,
-        gaussians: Gaussians,
+        gaussians: Gaussians | None,
         global_step: int,
     ) -> Float[Tensor, ""]:
         delta = prediction.color - batch["target"]["image"]
