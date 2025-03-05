@@ -94,7 +94,6 @@ class ModelWrapper_KD(LightningModule):
             self.test_step_outputs = {}
             self.time_skip_steps_dict = {"encoder": 0, "decoder": 0}
     
-    @rank_zero_only
     def training_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
         b, t, _ , h, w = batch["target"]["image"].shape
@@ -363,7 +362,8 @@ class ModelWrapper_KD(LightningModule):
             },
             step=self.global_step)
             
-            return None #only perform inference
+            # return None #only perform inference
+            return total_loss # here we backprop to see if by default decrease in performances
             
 
     @rank_zero_only

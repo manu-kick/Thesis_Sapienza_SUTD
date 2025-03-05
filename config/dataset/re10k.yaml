@@ -25,7 +25,7 @@ test_times_per_scene: 1
 
 refinement: true
 refinement_cfg:
-  name: refinement_camera_proximity # refinement_context, refinement_camera_proximity, refinement_camera_R_t, refinement_random # ---------- 
+  name: refinement_camera_R_t # refinement_context, refinement_camera_proximity, refinement_camera_R_t, refinement_random # ---------- 
   num_refinement_views: 4
   index_path: assets/evaluation_index_re10k.json # when using refinement_context
-  random_target_selection: true 
+  random_target_selection: false

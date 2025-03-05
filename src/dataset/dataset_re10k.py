@@ -249,7 +249,7 @@ class DatasetRE10k(IterableDataset):
                     } if self.cfg.refinement else None,
                     "scene": scene,
                 }
-                if self.stage == "train" and self.cfg.augment:
+                if self.stage == "train" and self.cfg.augment and self.cfg.refinement==False: #Note when we refine we don't augment otherwise we screw up  
                     example = apply_augmentation_shim(example)
                 yield apply_crop_shim(example, tuple(self.cfg.image_shape))
 

@@ -143,6 +143,9 @@ class ModelWrapper_KD_IMGS(LightningModule):
         batch: BatchedExample = self.data_shim(batch)
         b, t, _ , h, w = batch["target"]["image"].shape
         _, _, r, _, _, _ = batch["refinement"]["image"].shape
+        
+        # Export this batch as a torch file in the /outputs/saved_batches
+        torch.save(batch, f"outputs/saved_batches/batch_{batch_idx}.pt")
 
         raw_gaussians = self.encoder(
             batch["context"],
@@ -174,12 +177,17 @@ class ModelWrapper_KD_IMGS(LightningModule):
         batch['refinement']['extrinsics'] = rearrange(batch['refinement']['extrinsics'], "b t r i j -> (b t) r i j", r=r) 
         batch['refinement']['intrinsics'] = rearrange(batch['refinement']['intrinsics'], "b t r i j -> (b t) r i j", r=r)
         batch['refinement']['image'] = rearrange(batch['refinement']['image'], "b t r c h w -> (b t) r c h w", r=r)
-        batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b t -> (b t) ")
-        batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b t -> (b t)")    
+        batch['refinement']['index'] = rearrange(batch['refinement']['index'], "b t r -> (b t) r")
+        batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b r -> (b r)")
+        batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b r -> (b r)")    
         
-    
+        
+        context_rearranged = rearrange(batch["context"]["image"], "b v c h w -> (b v) c h w")
+        target_rearranged = rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w")
+        
         psnr_impr , ssim_impr, lpips_impr = [], [], []
         refinment_losses = []
+        refinement_target_predictions = []
         for t_i in range(b*t):  # Iterate over target views spread across batches
             current_target_gaussians = Gaussians(
                 means=raw_gaussians.means[t_i].unsqueeze(0).clone().detach(),
@@ -229,8 +237,8 @@ class ModelWrapper_KD_IMGS(LightningModule):
                 gaussians=current_target_gaussians,
                 extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
                 intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
-                near=batch["refinement"]["near"].unsqueeze(0),
-                far=batch["refinement"]["far"].unsqueeze(0),
+                near=batch["refinement"]["near"].unsqueeze(0), #
+                far=batch["refinement"]["far"].unsqueeze(0), #
                 image_shape=(h, w),
                 depth_mode=None,
                 use_scale_and_rotation=True,
@@ -257,6 +265,24 @@ class ModelWrapper_KD_IMGS(LightningModule):
                 raw_mv_output.color
             )
             refinment_losses.append(loss)
+            
+            # Comparision for the target view and the refined target view
+            index_refinement_labels = [f"{i}" for i in batch["refinement"]["index"][t_i]]
+            index_refinement_labels = " ".join(index_refinement_labels)
+            comparison = hcat(
+                add_label(vcat(*context_rearranged), "Context"),
+                add_label(vcat(*target_rearranged[t_i].unsqueeze(0)), "Target GT"),
+                add_label(vcat(*batch["refinement"]["image"][t_i]), "Refinement GT ("+index_refinement_labels+")"),
+                add_label(vcat(*raw_mv_output.color[0]), "MV Refinement prediction"),
+                add_label(vcat(*refined_mv_output.color[0]), "GS Refinement prediction"),
+            )
+            self.logger.log_image(
+                "Comparison refinement and target",
+                [prep_image(add_border(comparison))],
+                step=self.global_step,
+                caption=batch["scene"],
+            )
+            # continue
             
         # Loss Computation for the target view
         target_loss = 0
@@ -303,6 +329,26 @@ class ModelWrapper_KD_IMGS(LightningModule):
             "train/refinement_loss": final_refinment_loss.item(),
         }, step=self.global_step)
         
+        # Draw cameras.
+        cameras = hcat(*render_cameras(batch, 256))
+        self.logger.log_image(
+            "cameras", [prep_image(add_border(cameras))], step=self.global_step
+        )
+        
+        # Construct comparison image for target.
+        target_labels = [f"{i}" for i in batch["target"]["index"][0]]
+        target_labels = " ".join(target_labels)
+        comparison = hcat(
+            add_label(vcat(*batch["context"]["image"][0]), "Context"),
+            add_label(vcat(*batch["target"]["image"][0]), "Target (Ground Truth "+target_labels+")"),
+            add_label(vcat(*target_mv_output.color[0]), "MV Target prediction"),
+        )
+        self.logger.log_image(
+            "Comparison context and target",
+            [prep_image(add_border(comparison))],
+            step=self.global_step,
+            caption=batch["scene"],
+        )
             
         return total_loss
             
