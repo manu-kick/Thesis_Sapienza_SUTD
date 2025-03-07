@@ -6,31 +6,37 @@ from .view_sampler import ViewSampler
 from .view_sampler_all import ViewSamplerAll, ViewSamplerAllCfg
 from .view_sampler_arbitrary import ViewSamplerArbitrary, ViewSamplerArbitraryCfg
 from .view_sampler_bounded import ViewSamplerBounded, ViewSamplerBoundedCfg
+from .view_sampler_maximum_bound import ViewSampleMaximumBound, ViewSamplerMaximumBoundCfg
 from .view_sampler_evaluation import ViewSamplerEvaluation, ViewSamplerEvaluationCfg
 from .refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximity, RefinementViewSamplerCameraProximityCfg
 from .refinement_view_sampler_context import RefinementViewSamplerContext, RefinementViewSamplerContextCfg
 from .refinement_view_sampler_camera_R_t import RefinementViewSamplerCameraRt, RefinementViewSamplerCameraRtCfg
+from .refinement_view_sampler_uniform_sampling import RefinementViewSamplerUniformSampler, RefinementViewSamplerUniformSamplerCfg
 from .refinement_view_sampler_random import RefinementViewSamplerRandom, RefinementViewSamplerRandomCfg
 
 VIEW_SAMPLERS: dict[str, ViewSampler[Any]] = {
     "all": ViewSamplerAll,
     "arbitrary": ViewSamplerArbitrary,
     "bounded": ViewSamplerBounded,
+    'maximum_bound': ViewSampleMaximumBound,
     "evaluation": ViewSamplerEvaluation,
     "refinement_camera_proximity": RefinementViewSamplerCameraProximity,
     "refinement_context": RefinementViewSamplerContext, # Gives to the refiner the same set of views as the one used for obtain the raw gaussians from mv splat
     "refinement_camera_R_t": RefinementViewSamplerCameraRt,
+    'refinement_uniform_sampling': RefinementViewSamplerUniformSampler,
     "refinement_random": RefinementViewSamplerRandom,
 }
 
 ViewSamplerCfg = (
     ViewSamplerArbitraryCfg
     | ViewSamplerBoundedCfg
+    | ViewSamplerMaximumBoundCfg
     | ViewSamplerEvaluationCfg
     | ViewSamplerAllCfg
     | RefinementViewSamplerContextCfg
     | RefinementViewSamplerCameraProximityCfg
     | RefinementViewSamplerCameraRtCfg
+    | RefinementViewSamplerUniformSamplerCfg
     | RefinementViewSamplerRandomCfg
 )
 

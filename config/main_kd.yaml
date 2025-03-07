@@ -18,12 +18,12 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: Mv_Camera_Refinement_R_t_no_augmentation
+  name: Mv_freezed_Refinement_Uniform_Sampling
   mode: online
   id: null
 
 mode: train #  here train means knowledge distillation 
-enable_refinement: true
+enable_refinement: false
 
 dataset:
   overfit_to_scene: null

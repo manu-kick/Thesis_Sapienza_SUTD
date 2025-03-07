@@ -145,7 +145,7 @@ class ModelWrapper_KD_IMGS(LightningModule):
         _, _, r, _, _, _ = batch["refinement"]["image"].shape
         
         # Export this batch as a torch file in the /outputs/saved_batches
-        torch.save(batch, f"outputs/saved_batches/batch_{batch_idx}.pt")
+        torch.save(batch, f"outputs/batches_refinement_UniformSampling/batch_{batch_idx}.pt")
 
         raw_gaussians = self.encoder(
             batch["context"],
@@ -174,116 +174,131 @@ class ModelWrapper_KD_IMGS(LightningModule):
         ) 
         
         
-        batch['refinement']['extrinsics'] = rearrange(batch['refinement']['extrinsics'], "b t r i j -> (b t) r i j", r=r) 
-        batch['refinement']['intrinsics'] = rearrange(batch['refinement']['intrinsics'], "b t r i j -> (b t) r i j", r=r)
-        batch['refinement']['image'] = rearrange(batch['refinement']['image'], "b t r c h w -> (b t) r c h w", r=r)
-        batch['refinement']['index'] = rearrange(batch['refinement']['index'], "b t r -> (b t) r")
-        batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b r -> (b r)")
-        batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b r -> (b r)")    
-        
-        
-        context_rearranged = rearrange(batch["context"]["image"], "b v c h w -> (b v) c h w")
-        target_rearranged = rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w")
-        
-        psnr_impr , ssim_impr, lpips_impr = [], [], []
-        refinment_losses = []
-        refinement_target_predictions = []
-        for t_i in range(b*t):  # Iterate over target views spread across batches
-            current_target_gaussians = Gaussians(
-                means=raw_gaussians.means[t_i].unsqueeze(0).clone().detach(),
-                harmonics=raw_gaussians.harmonics[t_i].unsqueeze(0).clone().detach(),
-                opacities=raw_gaussians.opacities[t_i].unsqueeze(0).clone().detach(),
-                scales=raw_gaussians.scales[t_i].unsqueeze(0).clone().detach(),
-                rotations=raw_gaussians.rotations[t_i].unsqueeze(0).clone().detach(),
-                covariances=None
-            )
+        if self.refiner is not None: # Refinement is enabled
+            batch['refinement']['extrinsics'] = rearrange(batch['refinement']['extrinsics'], "b t r i j -> (b t) r i j", r=r) 
+            batch['refinement']['intrinsics'] = rearrange(batch['refinement']['intrinsics'], "b t r i j -> (b t) r i j", r=r)
+            batch['refinement']['image'] = rearrange(batch['refinement']['image'], "b t r c h w -> (b t) r c h w", r=r)
+            batch['refinement']['index'] = rearrange(batch['refinement']['index'], "b t r -> (b t) r")
+            batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b r -> (b r)")
+            batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b r -> (b r)")    
+    
+            context_rearranged = rearrange(batch["context"]["image"], "b v c h w -> (b v) c h w")
+            target_rearranged = rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w")
             
-            # Call the refiner
-            psnr_improvement,ssim_improvement, lpips_improvement = self.refiner.forward(
-                {   
-                    "extrinsics": batch['refinement']['extrinsics'][t_i].unsqueeze(0), 
-                    "intrinsics": batch['refinement']['intrinsics'][t_i].unsqueeze(0),
-                    "near": batch['refinement']['near'][t_i].unsqueeze(0),
-                    "far": batch['refinement']['far'][t_i].unsqueeze(0),
-                    "image": batch['refinement']['image'][t_i].unsqueeze(0),
-                }, 
-                current_target_gaussians, # gaussian of
-                self.global_step
-            )
-            psnr_impr.append(psnr_improvement)
-            ssim_impr.append(ssim_improvement)
-            lpips_impr.append(lpips_improvement)
+            psnr_impr , ssim_impr, lpips_impr = [], [], []
+            refinment_losses = []
+            refinement_target_predictions = []
+            for t_i in range(b*t):  # Iterate over target views spread across batches
+                current_target_gaussians = Gaussians(
+                    means=raw_gaussians.means[t_i].unsqueeze(0).clone().detach(),
+                    harmonics=raw_gaussians.harmonics[t_i].unsqueeze(0).clone().detach(),
+                    opacities=raw_gaussians.opacities[t_i].unsqueeze(0).clone().detach(),
+                    scales=raw_gaussians.scales[t_i].unsqueeze(0).clone().detach(),
+                    rotations=raw_gaussians.rotations[t_i].unsqueeze(0).clone().detach(),
+                    covariances=None
+                )
+                
+                # Call the refiner
+                psnr_improvement,ssim_improvement, lpips_improvement = self.refiner.forward(
+                    {   
+                        "extrinsics": batch['refinement']['extrinsics'][t_i].unsqueeze(0), 
+                        "intrinsics": batch['refinement']['intrinsics'][t_i].unsqueeze(0),
+                        "near": batch['refinement']['near'][t_i].unsqueeze(0),
+                        "far": batch['refinement']['far'][t_i].unsqueeze(0),
+                        "image": batch['refinement']['image'][t_i].unsqueeze(0),
+                    }, 
+                    current_target_gaussians, # gaussian of
+                    self.global_step
+                )
+                psnr_impr.append(psnr_improvement)
+                ssim_impr.append(ssim_improvement)
+                lpips_impr.append(lpips_improvement)
 
-            # Get the refined Gaussians
-            refined_gaussians = Gaussians(
-                means=self.refiner.means.clone().detach(), 
-                harmonics=self.refiner.harmonics.clone().detach(),
-                opacities=self.refiner.opacities.clone().detach(), 
-                scales=self.refiner.scales.clone().detach(),
-                rotations=self.refiner.rotations.clone().detach(),
-                covariances=None  # We use scales and rotations
-            )
+                # Get the refined Gaussians
+                refined_gaussians = Gaussians(
+                    means=self.refiner.means.clone().detach(), 
+                    harmonics=self.refiner.harmonics.clone().detach(),
+                    opacities=self.refiner.opacities.clone().detach(), 
+                    scales=self.refiner.scales.clone().detach(),
+                    rotations=self.refiner.rotations.clone().detach(),
+                    covariances=None  # We use scales and rotations
+                )
+                
+                # Splat the refinment cameras using the refined gaussians
+                current_target_gaussians = Gaussians(
+                    means=raw_gaussians.means[t_i].unsqueeze(0),
+                    harmonics=raw_gaussians.harmonics[t_i].unsqueeze(0),
+                    opacities=raw_gaussians.opacities[t_i].unsqueeze(0),
+                    scales=raw_gaussians.scales[t_i].unsqueeze(0),
+                    rotations=raw_gaussians.rotations[t_i].unsqueeze(0),
+                    covariances=None
+                )
+                raw_mv_output = self.decoder.forward( #check if are still in the graph the raw gaussians
+                    gaussians=current_target_gaussians,
+                    extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
+                    intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
+                    near=batch["refinement"]["near"].unsqueeze(0), #
+                    far=batch["refinement"]["far"].unsqueeze(0), #
+                    image_shape=(h, w),
+                    depth_mode=None,
+                    use_scale_and_rotation=True,
+                )
+                refined_mv_output = self.decoder.forward(
+                    gaussians=refined_gaussians,
+                    extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
+                    intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
+                    near=batch["refinement"]["near"].unsqueeze(0),
+                    far=batch["refinement"]["far"].unsqueeze(0),
+                    image_shape=(h, w),
+                    depth_mode=None,
+                    use_scale_and_rotation=True,
+                )
+                
+                # Loss Computation for the refinement of the current target view
+                loss = 0
+                loss += mse_loss(
+                    refined_mv_output.color,
+                    raw_mv_output.color
+                )
+                loss += self.lpips_loss(
+                    refined_mv_output.color,
+                    raw_mv_output.color
+                )
+                refinment_losses.append(loss)
+                
+                # Comparision for the target view and the refined target view
+                index_refinement_labels = [f"{i}" for i in batch["refinement"]["index"][t_i]]
+                index_refinement_labels = " ".join(index_refinement_labels)
+                comparison = hcat(
+                    add_label(vcat(*context_rearranged), "Context"),
+                    add_label(vcat(*target_rearranged[t_i].unsqueeze(0)), "Target GT"),
+                    add_label(vcat(*batch["refinement"]["image"][t_i]), "Refinement GT ("+index_refinement_labels+")"),
+                    add_label(vcat(*raw_mv_output.color[0]), "MV Refinement prediction"),
+                    add_label(vcat(*refined_mv_output.color[0]), "GS Refinement prediction"),
+                )
+                self.logger.log_image(
+                    "Comparison refinement and target",
+                    [prep_image(add_border(comparison))],
+                    step=self.global_step,
+                    caption=batch["scene"],
+                )
+                # continue
+                
+                final_psnr_impr = np.mean(psnr_impr)
+                final_ssim_impr = np.mean(ssim_impr)
+                final_lpips_impr = np.mean(lpips_impr)
+                # Mean over the refinement losses
+                final_refinment_loss = torch.mean(torch.stack(refinment_losses))
+               
+                # Log the distillation-dependent metrics
+                self.logger.log_metrics({
+                    "train/psnr_improvement": final_psnr_impr,
+                    "train/ssim_improvement": final_ssim_impr,
+                    "train/lpips_improvement": final_lpips_impr,
+                    "train/refinement_loss": final_refinment_loss.item(),
+                }, step=self.global_step)
             
-            # Splat the refinment cameras using the refined gaussians
-            current_target_gaussians = Gaussians(
-                means=raw_gaussians.means[t_i].unsqueeze(0),
-                harmonics=raw_gaussians.harmonics[t_i].unsqueeze(0),
-                opacities=raw_gaussians.opacities[t_i].unsqueeze(0),
-                scales=raw_gaussians.scales[t_i].unsqueeze(0),
-                rotations=raw_gaussians.rotations[t_i].unsqueeze(0),
-                covariances=None
-            )
-            raw_mv_output = self.decoder.forward( #check if are still in the graph the raw gaussians
-                gaussians=current_target_gaussians,
-                extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
-                intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
-                near=batch["refinement"]["near"].unsqueeze(0), #
-                far=batch["refinement"]["far"].unsqueeze(0), #
-                image_shape=(h, w),
-                depth_mode=None,
-                use_scale_and_rotation=True,
-            )
-            refined_mv_output = self.decoder.forward(
-                gaussians=refined_gaussians,
-                extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
-                intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
-                near=batch["refinement"]["near"].unsqueeze(0),
-                far=batch["refinement"]["far"].unsqueeze(0),
-                image_shape=(h, w),
-                depth_mode=None,
-                use_scale_and_rotation=True,
-            )
-            
-            # Loss Computation for the refinement of the current target view
-            loss = 0
-            loss += mse_loss(
-                refined_mv_output.color,
-                raw_mv_output.color
-            )
-            loss += self.lpips_loss(
-                refined_mv_output.color,
-                raw_mv_output.color
-            )
-            refinment_losses.append(loss)
-            
-            # Comparision for the target view and the refined target view
-            index_refinement_labels = [f"{i}" for i in batch["refinement"]["index"][t_i]]
-            index_refinement_labels = " ".join(index_refinement_labels)
-            comparison = hcat(
-                add_label(vcat(*context_rearranged), "Context"),
-                add_label(vcat(*target_rearranged[t_i].unsqueeze(0)), "Target GT"),
-                add_label(vcat(*batch["refinement"]["image"][t_i]), "Refinement GT ("+index_refinement_labels+")"),
-                add_label(vcat(*raw_mv_output.color[0]), "MV Refinement prediction"),
-                add_label(vcat(*refined_mv_output.color[0]), "GS Refinement prediction"),
-            )
-            self.logger.log_image(
-                "Comparison refinement and target",
-                [prep_image(add_border(comparison))],
-                step=self.global_step,
-                caption=batch["scene"],
-            )
-            # continue
-            
+        # Refinement is disabled, run mv
         # Loss Computation for the target view
         target_loss = 0
         for loss_fn in self.losses:
@@ -295,20 +310,10 @@ class ModelWrapper_KD_IMGS(LightningModule):
             )
             target_loss += loss_i
         self.log("train_loss", target_loss, sync_dist=True)
-        
-        final_psnr_impr = np.mean(psnr_impr)
-        final_ssim_impr = np.mean(ssim_impr)
-        final_lpips_impr = np.mean(lpips_impr)
-        # Mean over the refinement losses
-        final_refinment_loss = torch.mean(torch.stack(refinment_losses))
-        total_loss = target_loss + final_refinment_loss
-        self.log("train/ref_loss", total_loss, sync_dist=True)
-        
-        
         psnr_mv = compute_psnr(
-            rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
-            rearrange(target_mv_output.color, "b v c h w -> (b v) c h w"),
-        ).mean().item()
+                rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
+                rearrange(target_mv_output.color, "b v c h w -> (b v) c h w"),
+            ).mean().item()
         ssim_mv = compute_ssim(
             rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
             rearrange(target_mv_output.color,"b v c h w -> (b v) c h w"),
@@ -316,17 +321,17 @@ class ModelWrapper_KD_IMGS(LightningModule):
         lpips_mv = compute_lpips(
             rearrange(batch["target"]["image"],"b v c h w -> (b v) c h w"), 
             rearrange(target_mv_output.color,"b v c h w -> (b v) c h w"),
-        ).mean().item()
-                
+        ).mean().item() 
+        
+        if self.refiner is not None:
+            total_loss = target_loss + final_refinment_loss
+            self.log("train/ref_loss", total_loss, sync_dist=True)
+       
         self.logger.log_metrics({
             "train/loss": target_loss.item(),
-            "train/psnr_improvement": final_psnr_impr,
-            "train/ssim_improvement": final_ssim_impr,
-            "train/lpips_improvement": final_lpips_impr,
             "train/psnr_mean": psnr_mv,
             "train/ssim_mean": ssim_mv,
             "train/lpips_mean": lpips_mv,
-            "train/refinement_loss": final_refinment_loss.item(),
         }, step=self.global_step)
         
         # Draw cameras.
@@ -350,7 +355,7 @@ class ModelWrapper_KD_IMGS(LightningModule):
             caption=batch["scene"],
         )
             
-        return total_loss
+        return total_loss if self.refiner is not None else target_loss
             
 
 

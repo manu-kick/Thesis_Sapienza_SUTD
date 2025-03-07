@@ -160,7 +160,7 @@ class DatasetRE10k(IterableDataset):
                     refinement_indices = self.refinement_view_sampler.sample(
                         scene,
                         extrinsics,
-                        target_indices,
+                        target_indices if self.cfg.refinement_cfg['name'] != 'refinement_uniform_sampling' else context_indices, # The unifmorm sampling is basedon the context
                     )
                     
                     refinement_intr = []
