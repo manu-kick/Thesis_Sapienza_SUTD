@@ -97,6 +97,7 @@ class ModelWrapper_KD(LightningModule):
     def training_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
         b, t, _ , h, w = batch["target"]["image"].shape
+        torch.save(batch, f"outputs/batches_refinement_UniformSampling/batch_{batch_idx}.pt")
 
         gaussians = self.encoder(
             batch["context"],
@@ -105,7 +106,7 @@ class ModelWrapper_KD(LightningModule):
         )
         
         # --- Refinement Process ---
-        mse_losses = []
+        gaussian_raw_refined_losses = []
         if self.refiner is not None:
             output_mv = self.decoder.forward(
                 gaussians=gaussians, # use the gaussians from the encoder (keep the gradient)
@@ -256,17 +257,27 @@ class ModelWrapper_KD(LightningModule):
                     )
 
                     # Compute MSE loss between original and refined Gaussians
-                    mse_loss = (
-                        F.mse_loss(refined_gaussians.means, current_target_gaussians.means) +
-                        F.mse_loss(refined_gaussians.harmonics, current_target_gaussians.harmonics) +
-                        F.mse_loss(refined_gaussians.opacities, current_target_gaussians.opacities) +
-                        F.mse_loss(refined_gaussians.scales, current_target_gaussians.scales) +
-                        F.mse_loss(refined_gaussians.rotations, current_target_gaussians.rotations)
-                    ) 
-                    mse_losses.append(mse_loss)
-                    
+                    if self.refiner_cfg['refinement_loss'] == "mse":
+                        mse_loss = (
+                            F.mse_loss(refined_gaussians.means, current_target_gaussians.means) +
+                            F.mse_loss(refined_gaussians.harmonics, current_target_gaussians.harmonics) +
+                            F.mse_loss(refined_gaussians.opacities, current_target_gaussians.opacities) +
+                            F.mse_loss(refined_gaussians.scales, current_target_gaussians.scales) +
+                            F.mse_loss(refined_gaussians.rotations, current_target_gaussians.rotations)
+                        ) 
+                        gaussian_raw_refined_losses.append(mse_loss)
+                    else: # KL
+                        kl_loss = (
+                            F.kl_div(F.log_softmax(refined_gaussians.means, dim=-1), F.softmax(current_target_gaussians.means, dim=-1)) +
+                            F.kl_div(F.log_softmax(refined_gaussians.harmonics, dim=-1), F.softmax(current_target_gaussians.harmonics, dim=-1)) +
+                            F.kl_div(F.log_softmax(refined_gaussians.opacities, dim=-1), F.softmax(current_target_gaussians.opacities, dim=-1)) +
+                            F.kl_div(F.log_softmax(refined_gaussians.scales, dim=-1), F.softmax(current_target_gaussians.scales, dim=-1)) +
+                            F.kl_div(F.log_softmax(refined_gaussians.rotations, dim=-1), F.softmax(current_target_gaussians.rotations, dim=-1))
+                        )
+                        gaussian_raw_refined_losses.append(kl_loss)
+                        
                 # Compute final loss (mean across target views flatten wrt batch)
-                raw_ref_loss = torch.mean(torch.stack(mse_losses)) if mse_losses else torch.tensor(0.0, device=self.device)
+                raw_ref_loss = torch.mean(torch.stack(gaussian_raw_refined_losses)) if gaussian_raw_refined_losses else torch.tensor(0.0, device=self.device)
                 total_loss = raw_ref_loss
                 student_loss = 0
                 for loss_fn in self.losses:

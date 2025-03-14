@@ -9,6 +9,7 @@ class RefinementViewSamplerUniformSamplerCfg:
     name: Literal["refinement_uniform_sampling"]
     index_path: str  # Not used in this implementation
     num_refinement_views: int
+    refinement_loss: str
     random_target_selection: bool = False
 
 

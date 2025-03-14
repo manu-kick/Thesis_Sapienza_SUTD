@@ -18,12 +18,12 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: Mv_freezed_Refinement_Uniform_Sampling
+  name: Mv_Refinement_UniSampling_GaussianSpace_KL
   mode: online
   id: null
 
 mode: train #  here train means knowledge distillation 
-enable_refinement: false
+enable_refinement: true
 
 dataset:
   overfit_to_scene: null
@@ -54,6 +54,7 @@ optimizer:
   cosine_lr: true
 
 checkpointing:
+  # load: outputs/2025-03-10/20-23-04/checkpoints/best_train_loss-v1.ckpt
   load: checkpoints/re10k.ckpt
   # load: outputs/2025-02-20/18-50-57/checkpoints/best_train_loss-v1.ckpt
   # load: outputs/2025-02-20/18-50-57/checkpoints/best_val_psnr.ckpt

@@ -1,5 +1,5 @@
 defaults:
-  - view_sampler: maximum_bound # bounded, evaluation, maximum_bound (kd training)
+  - view_sampler: bounded # bounded, evaluation, maximum_bound (kd training)
 
 
 name: re10k
@@ -29,3 +29,4 @@ refinement_cfg:
   num_refinement_views: 4
   index_path: assets/evaluation_index_re10k.json # when using refinement_context
   random_target_selection: false
+  refinement_loss: kl # kl, mse

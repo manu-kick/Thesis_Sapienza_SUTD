@@ -40,7 +40,7 @@ class ViewSampleMaximumBound(ViewSampler[ViewSamplerMaximumBoundCfg]):
 
         # Pick the gap between the context views.
         # NOTE: we keep the bug untouched to follow initial pixelsplat cfgs
-        # NOTE 2: we soleve the bug
+        # NOTE 2: we solve the bug
         if not self.cameras_are_circular:
             max_gap = min(num_views - 1, max_gap) #bug solved
         min_gap = max(2 * self.cfg.min_distance_to_context_views, min_gap)
