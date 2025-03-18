@@ -9,6 +9,7 @@ class RefinementViewSamplerCameraRtCfg:
     name: Literal["refinement_camera_R_t"]
     index_path: str  # Not used in this implementation
     num_refinement_views: int
+    refinement_loss: str 
     lambda_fov: float = 0.5  # Weight for field-of-view similarity (0 to 1)
     random_target_selection: bool = False
 

@@ -18,8 +18,8 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: Mv_Refinement_UniSampling_GaussianSpace_KL
-  mode: online
+  name: Mv_KD_MLP
+  mode: disabled
   id: null
 
 mode: train #  here train means knowledge distillation 

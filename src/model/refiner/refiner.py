@@ -79,7 +79,8 @@ class Refiner(nn.Module):
         ]
         return torch.optim.Adam(param_groups, eps=1e-15)
     
-    def forward(self, batch, gaussians, step):
+    def forward(self, batch, gaussians, step, return_history = False):
+        history = []
         with torch.inference_mode(False):  # 🔥 Force autograd to work
             with torch.enable_grad():  # ✅ Ensure gradients are enabled
                 self.initialize_parameters(gaussians)
@@ -148,6 +149,19 @@ class Refiner(nn.Module):
                     with torch.no_grad():
                         self.optimizer.step()
                         self.optimizer.zero_grad(set_to_none=True)
+                        
+                    if i%10 == 0 and return_history and i > 0:
+                        # Append the gaussian parameters to the history
+                        history.append(Gaussians(
+                            means=self.means.clone().detach(),
+                            harmonics=self.harmonics.clone().detach(),
+                            opacities=self.opacities.clone().detach(),
+                            scales=self.scales.clone().detach(),
+                            rotations=self.rotations.clone().detach(),
+                            covariances=None
+                            )
+                        )
+                        
 
                     # 🔥 EARLY STOPPING CHECK 🔥
                     if self.cfg.enable_early_stopping:
@@ -174,7 +188,7 @@ class Refiner(nn.Module):
                 ssim_improvement_mean = np.mean(ssim_improvement_per_view)
                 lpips_improvement_mean = np.mean(lpips_improvement_per_view)
 
-        return psnr_improvement_mean, ssim_improvement_mean, lpips_improvement_mean
+        return psnr_improvement_mean, ssim_improvement_mean, lpips_improvement_mean, history
     
     def compute_loss(self, output, target):
         total_loss = torch.tensor(0.0, device=output.color.device, requires_grad=True)
