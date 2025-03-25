@@ -5,7 +5,7 @@ from typing import Optional, Protocol, runtime_checkable
 # import moviepy.editor as mpy
 import torch
 import wandb
-from einops import pack, rearrange, repeat
+from einops import pack, rearrange, repeat 
 from jaxtyping import Float
 from pytorch_lightning import LightningModule
 from pytorch_lightning.loggers.wandb import WandbLogger
@@ -41,9 +41,64 @@ from .decoder.decoder import Decoder, DepthRenderingMode
 from .encoder import Encoder
 from .encoder.visualization.encoder_visualizer import EncoderVisualizer
 from PIL import Image
-from ..misc.utilities import save_gaussians
+from ..misc.utilities import save_gaussians, cluster_gaussians
 from .types import Gaussians
 from .model_wrapper import OptimizerCfg, TestCfg, TrainCfg, TrajectoryFn
+import torch
+import torch.nn.functional as F
+import open_clip
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+
+clip_normalize = Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                           std=[0.26862954, 0.26130258, 0.27577711])
+
+# Step 1: Load CLIP model + preprocessing
+def load_clip_model(model_name="ViT-B-32", pretrained="laion2b_s34b_b79k"):
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        model_name=model_name,
+        pretrained=pretrained
+    )
+    model.eval()
+    return model, preprocess
+
+# Step 2: Get per-cluster feature descriptor
+def get_features(cluster_img_tensor, model, target_size=224):
+    """
+    cluster_img_tensor: torch.Tensor, [3, H, W], values in [0, 1]
+    model: CLIP model
+    Returns: [1, D] normalized feature
+    """
+    if cluster_img_tensor.max() > 1.0:
+        cluster_img_tensor = cluster_img_tensor / 255.0
+
+    # Resize to match CLIP input size
+    resize = Resize((target_size, target_size))
+    cluster_img_tensor = resize(cluster_img_tensor)
+
+    # Normalize and batch
+    image_tensor = clip_normalize(cluster_img_tensor).unsqueeze(0).to(next(model.parameters()).device)
+
+    with torch.no_grad():
+        image_features = model.encode_image(image_tensor)
+        image_features = F.normalize(image_features, dim=-1)
+
+    return image_features
+
+# Step 4: Match cluster descriptor with refinement descriptors
+def match_and_extract(cluster_feature, refinement_features, top_k=1):
+    """
+    cluster_feature: [1, D]
+    refinement_features: List of [1, D]
+    """
+    all_ref_features = torch.cat(refinement_features, dim=0)  # [R, D]
+    sims = F.cosine_similarity(cluster_feature, all_ref_features)  # [R]
+    topk = torch.topk(sims, k=top_k)
+
+    matched_feats = all_ref_features[topk.indices]  # [top_k, D]
+    fused_feature = matched_feats.mean(dim=0, keepdim=True)  # [1, D]
+
+    return fused_feature  # fused semantic feature for this cluster
+
 
 
 class GaussianRefinementMLP(nn.Module):
@@ -154,6 +209,8 @@ class ModelWrapper_KD_MLP(LightningModule):
             
         # Add MLP for Gaussian refinement mapping
         self.gaussian_mlp = GaussianRefinementMLP()
+        self.clip_model, self.clip_preprocess = load_clip_model()
+        self.clip_model = self.clip_model.to(next(self.gaussian_mlp.parameters()).device)
         
     def on_train_start(self):
         self.encoder.eval()
@@ -169,6 +226,7 @@ class ModelWrapper_KD_MLP(LightningModule):
             deterministic=False,
         )
         
+     
         # Get the target images predicted directly form Mv
         output_mv = self.decoder.forward(
             gaussians=gaussians, # use the gaussians from the encoder (keep the gradient)
@@ -240,7 +298,61 @@ class ModelWrapper_KD_MLP(LightningModule):
         batch['target']['near'] = rearrange(batch['target']['near'], "b t -> (b t)")
         batch['target']['far'] = rearrange(batch['target']['far'], "b t -> (b t)")
         
+        refinement_features = self.encoder.backbone(batch['refinement']['image'])[0]
+        clusters = cluster_gaussians(self.gaussian_mlp.prepare_gaussians(gaussians), exclude_z=False)
         
+        # Decode an image for each cluster for a target view
+        cluster_images_targets = []
+        for t_i in range(b*t):
+            cluster_images_target = []
+            for i, cluster in enumerate(clusters[batch_idx]):
+                output = self.decoder.forward(
+                    gaussians=cluster,
+                    extrinsics=batch["target"]["extrinsics"][t_i].unsqueeze(0).unsqueeze(0),
+                    intrinsics=batch["target"]["intrinsics"][t_i].unsqueeze(0).unsqueeze(0),
+                    near=batch["target"]["near"][t_i].unsqueeze(0).unsqueeze(0),
+                    far=batch["target"]["far"][t_i].unsqueeze(0).unsqueeze(0),
+                    image_shape=(h, w),
+                    depth_mode=None,
+                    use_scale_and_rotation=True,
+                )
+                cluster_images_target.append(output.color[0][0])
+            cluster_images_targets.append(torch.stack(cluster_images_target))
+        
+        # Create the Comparison with number of column equal to the number of targets and the first row is cothe original target image while the other rows are the cluster images
+        for t_i in range(len(cluster_images_targets)):
+            # Add the original target image to the given target cluster images
+            cluster_images_targets[t_i] = torch.cat((batch['target']['image'][t_i].unsqueeze(0), cluster_images_targets[t_i]), dim=0)
+        
+        comparison = hcat(
+            add_label(vcat(*cluster_images_targets[0]), "Target 0"),
+            add_label(vcat(*cluster_images_targets[1]), "Target 1"),
+            add_label(vcat(*cluster_images_targets[2]), "Target 2"),
+            add_label(vcat(*cluster_images_targets[3]), "Target 3"),
+        )
+        
+        self.logger.log_image(
+            'Cluster plot for targets',
+            [prep_image(add_border(comparison))],
+            step=self.global_step,
+            caption=batch["scene"],
+        )
+        
+        
+        enriched_cluster_features = []
+
+        for cluster_img in cluster_images_targets[t_i][1:]:  # skip first image (full target image)
+            cluster_feature = get_features(cluster_img, self.clip_model)
+
+            refinement_feats = []
+            for r_i in range(r):
+                refinement_img = batch['refinement']['image'][t_i][r_i]  # [3, H, W] or PIL
+                refinement_feat = get_features(refinement_img, self.clip_model, self.clip_preprocess)
+                refinement_feats.append(refinement_feat)
+
+            # Match and fuse
+            enriched_feat = match_and_extract(cluster_feature, refinement_feats, top_k=1)
+            enriched_cluster_features.append(enriched_feat)
         
         for t_i in range(b*t):  # Iterate over target views spread across batches
             current_target_gaussians = Gaussians(
@@ -306,7 +418,14 @@ class ModelWrapper_KD_MLP(LightningModule):
             metrics['improvement']['lpips'].append(metrics['lpips_refined'][-1] - metrics['lpips_mv'][t_i])
             
             # Predict the gaussians using the MLP
+            gaussian_tensor = self.gaussian_mlp.prepare_gaussians(refined_gaussians)
+            # rearrange from 1, 131072 , 86 -> 1 ,2, 256, 256, 86
+            p = batch['context']['image'].shape[1]
+            gaussiasn_tensor = rearrange(gaussian_tensor, "b g a -> b p h w a", b=b, p=p, h=h, w=w, a=gaussian_tensor.shape[-1])
             predicted_gaussians.append(self.gaussian_mlp(current_target_gaussians))
+            
+            # torch.cat((rearrange(refinement_features[0][0],'r d x y -> r d (x y)'), self.gaussian_mlp.prepare_gaussians(current_target_gaussians)),dim=0)
+            
             
             # Compute the loss between the predicted gaussians and the refined gaussians (l1 )
             l1_means = F.l1_loss(predicted_gaussians[-1][:, :3], refined_gaussians[-1].means).item()
@@ -316,8 +435,6 @@ class ModelWrapper_KD_MLP(LightningModule):
             l1_rotations = F.l1_loss(predicted_gaussians[-1][:, 82:86], refined_gaussians[-1].rotations).item()
             metrics['loss_predicted_refined'].append(l1_means + l1_harmonics + l1_opacities + l1_scales + l1_rotations)
     
-        
-        
         total_loss = torch.mean(torch.tensor(metrics['loss_predicted_refined']))
         
         return  total_loss

@@ -161,8 +161,8 @@ def train(cfg_dict: DictConfig):
         "refiner": refiner if cfg.enable_refinement else None,
         "refiner_cfg": cfg.dataset.refinement_cfg if cfg.enable_refinement else None,
         "step_tracker": step_tracker,
-    }
-        
+        }
+                        
     data_module = DataModule(
         cfg.dataset,
         cfg.data_loader,
@@ -192,7 +192,7 @@ def train(cfg_dict: DictConfig):
 
         # Manually load the filtered state_dict to avoid unexpected keys
         model_wrapper.load_state_dict(filtered_state_dict, strict=False)
-
+        
         trainer.test(
             model_wrapper,
             datamodule=data_module,

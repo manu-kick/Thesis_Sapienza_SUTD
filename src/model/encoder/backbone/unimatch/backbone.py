@@ -99,15 +99,16 @@ class CNNEncoder(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.conv1(x)
+        # x: views, 3, 256, 256
+        x = self.conv1(x) # views, 64, 128, 128
         x = self.norm1(x)
         x = self.relu1(x)
 
-        x = self.layer1(x)  # 1/2
-        x = self.layer2(x)  # 1/4
-        x = self.layer3(x)  # 1/8 or 1/4
+        x = self.layer1(x)  # 1/2  # views, 64, 128, 128
+        x = self.layer2(x)  # 1/4 # views, 96, 64, 64
+        x = self.layer3(x)  # 1/8 or 1/4 # views, 128, 64, 64
 
-        x = self.conv2(x)
+        x = self.conv2(x) # views, 128, 64, 64
 
         if self.num_branch > 1:
             out = self.trident_conv([x] * self.num_branch)  # high to low res

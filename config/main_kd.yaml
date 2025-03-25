@@ -18,7 +18,7 @@ defaults:
 wandb:
   project: MV_Thesis
   entity: rucci-2053183
-  name: Mv_KD_MLP
+  name: Mv_boundend_MLP
   mode: disabled
   id: null
 
@@ -54,8 +54,10 @@ optimizer:
   cosine_lr: true
 
 checkpointing:
+  # load: checkpoints/re10k.ckpt
+  load: outputs/2025-03-19/Mv_KD_R_t_v2_max_bounds/checkpoints/best_train_loss-v1.ckpt
+  # load: outputs/2025-03-20/MV_freezed_max_bounds_R_t/checkpoints/best_train_loss-v1.ckpt
   # load: outputs/2025-03-10/20-23-04/checkpoints/best_train_loss-v1.ckpt
-  load: checkpoints/re10k.ckpt
   # load: outputs/2025-02-20/18-50-57/checkpoints/best_train_loss-v1.ckpt
   # load: outputs/2025-02-20/18-50-57/checkpoints/best_val_psnr.ckpt
   # load: outputs/2025-02-20/18-50-57/checkpoints/best_val_psnr.ckpt

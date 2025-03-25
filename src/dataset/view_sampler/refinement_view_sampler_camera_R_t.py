@@ -10,6 +10,7 @@ class RefinementViewSamplerCameraRtCfg:
     index_path: str  # Not used in this implementation
     num_refinement_views: int
     refinement_loss: str 
+    refinement_lambda_loss: float
     lambda_fov: float = 0.5  # Weight for field-of-view similarity (0 to 1)
     random_target_selection: bool = False
 
