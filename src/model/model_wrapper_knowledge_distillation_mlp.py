@@ -48,57 +48,55 @@ import torch
 import torch.nn.functional as F
 import open_clip
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+import cv2
+import matplotlib.pyplot as plt
 
-clip_normalize = Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
-                           std=[0.26862954, 0.26130258, 0.27577711])
+def sift_match(cluster_image, refinement_image):
+    """
+    Match the cluster image with the refinement image using SIFT.
+    """
+    # Convert to grayscale
+    # cluster_image has shape (3,256,256) and refinement_image has shape (4,3,256,256) from which I select the first one
+    cluster_gray = cv2.cvtColor(cluster_image.clone().detach().permute(1,2,0).cpu().numpy(), cv2.COLOR_RGB2GRAY).astype(np.uint8)
+    refinement_gray = cv2.cvtColor(refinement_image[0].clone().detach().permute(1,2,0).cpu().numpy(), cv2.COLOR_RGB2GRAY).astype(np.uint8)
 
-# Step 1: Load CLIP model + preprocessing
-def load_clip_model(model_name="ViT-B-32", pretrained="laion2b_s34b_b79k"):
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        model_name=model_name,
-        pretrained=pretrained
+    # Initialize SIFT detector
+    sift = cv2.SIFT_create()
+
+    # Detect keypoints and descriptors
+    kp_cluster, des_cluster = sift.detectAndCompute(cluster_gray, None)
+    kp_refinement, des_refinement = sift.detectAndCompute(refinement_gray, None)
+
+    # Use FLANN or Brute-Force matcher
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+    matches = bf.match(des_cluster, des_refinement)
+
+    # Sort them in ascending order of distance
+    matches = sorted(matches, key=lambda x: x.distance)
+
+    return kp_cluster, kp_refinement, matches
+
+
+# Function to visualize the keypoint matching
+def visualize_keypoint_matching(cluster_image, refinement_image, kp_cluster, kp_refinement, matches):
+    """
+    Visualize the keypoint matching between the cluster image and refinement camera image.
+    This will draw lines between corresponding keypoints using SIFT.
+    """
+    # Draw the matches between the two images
+    matched_image = cv2.drawMatches(
+        cluster_image.clone().detach().permute(1,2,0).cpu().numpy().astype(np.uint8), kp_cluster, 
+        refinement_image[0].clone().detach().permute(1,2,0).cpu().numpy().astype(np.uint8), kp_refinement, 
+        matches[:10], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
     )
-    model.eval()
-    return model, preprocess
 
-# Step 2: Get per-cluster feature descriptor
-def get_features(cluster_img_tensor, model, target_size=224):
-    """
-    cluster_img_tensor: torch.Tensor, [3, H, W], values in [0, 1]
-    model: CLIP model
-    Returns: [1, D] normalized feature
-    """
-    if cluster_img_tensor.max() > 1.0:
-        cluster_img_tensor = cluster_img_tensor / 255.0
+    # Convert the result to RGB for plotting with matplotlib
+    matched_image_rgb = cv2.cvtColor(matched_image, cv2.COLOR_BGR2RGB)
 
-    # Resize to match CLIP input size
-    resize = Resize((target_size, target_size))
-    cluster_img_tensor = resize(cluster_img_tensor)
-
-    # Normalize and batch
-    image_tensor = clip_normalize(cluster_img_tensor).unsqueeze(0).to(next(model.parameters()).device)
-
-    with torch.no_grad():
-        image_features = model.encode_image(image_tensor)
-        image_features = F.normalize(image_features, dim=-1)
-
-    return image_features
-
-# Step 4: Match cluster descriptor with refinement descriptors
-def match_and_extract(cluster_feature, refinement_features, top_k=1):
-    """
-    cluster_feature: [1, D]
-    refinement_features: List of [1, D]
-    """
-    all_ref_features = torch.cat(refinement_features, dim=0)  # [R, D]
-    sims = F.cosine_similarity(cluster_feature, all_ref_features)  # [R]
-    topk = torch.topk(sims, k=top_k)
-
-    matched_feats = all_ref_features[topk.indices]  # [top_k, D]
-    fused_feature = matched_feats.mean(dim=0, keepdim=True)  # [1, D]
-
-    return fused_feature  # fused semantic feature for this cluster
-
+    # Save the matched image
+    matched_image_path = Path("matched_keypoints.png")
+    matched_image_bgr = cv2.cvtColor(matched_image_rgb, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(str(matched_image_path), matched_image_bgr)
 
 
 class GaussianRefinementMLP(nn.Module):
@@ -209,9 +207,19 @@ class ModelWrapper_KD_MLP(LightningModule):
             
         # Add MLP for Gaussian refinement mapping
         self.gaussian_mlp = GaussianRefinementMLP()
-        self.clip_model, self.clip_preprocess = load_clip_model()
-        self.clip_model = self.clip_model.to(next(self.gaussian_mlp.parameters()).device)
         
+    # TODO: Create a fusion of clustered Gaussians and the refinement features
+    def fuse_gaussians_with_refinement_features(self,cluster, matched_features):
+        """
+        Fuse Gaussian features with refinement features using matched keypoints.
+        """
+        gaussian_features = self.gaussian_mlp.prepare_gaussians(cluster)
+        
+        # Here we can use matched keypoints or their descriptors to fuse the refinement features
+        matched_descriptors = torch.tensor([desc for _, desc in matched_features])  # Extract descriptors from the matches
+        fused_features = torch.cat((gaussian_features, matched_descriptors), dim=-1)  # Concatenate along feature dimension
+        return fused_features
+
     def on_train_start(self):
         self.encoder.eval()
 
@@ -298,7 +306,7 @@ class ModelWrapper_KD_MLP(LightningModule):
         batch['target']['near'] = rearrange(batch['target']['near'], "b t -> (b t)")
         batch['target']['far'] = rearrange(batch['target']['far'], "b t -> (b t)")
         
-        refinement_features = self.encoder.backbone(batch['refinement']['image'])[0]
+        refinement_features = self.encoder.backbone(batch['refinement']['image'])[0] #Features for the whole image, not what we need
         clusters = cluster_gaussians(self.gaussian_mlp.prepare_gaussians(gaussians), exclude_z=False)
         
         # Decode an image for each cluster for a target view
@@ -339,20 +347,37 @@ class ModelWrapper_KD_MLP(LightningModule):
         )
         
         
-        enriched_cluster_features = []
+        # TODO: create match between the cluster images and the refinement features 
+        # Matching process
+        matched_features = []
+        for t_i in range(len(cluster_images_targets)):
+            matched_features_per_target = []
+            for i, cluster_image in enumerate(cluster_images_targets[t_i]):
+                refinement_image = batch['refinement']['image'][t_i]  # Use the corresponding refinement image
+                kp_cluster, kp_refinement, matches = sift_match(cluster_image, refinement_image)
 
-        for cluster_img in cluster_images_targets[t_i][1:]:  # skip first image (full target image)
-            cluster_feature = get_features(cluster_img, self.clip_model)
+                # Collect matched points from both cluster and refinement images
+                matched_points_cluster = [kp_cluster[m.queryIdx].pt for m in matches]
+                matched_points_refinement = [kp_refinement[m.trainIdx].pt for m in matches]
 
-            refinement_feats = []
-            for r_i in range(r):
-                refinement_img = batch['refinement']['image'][t_i][r_i]  # [3, H, W] or PIL
-                refinement_feat = get_features(refinement_img, self.clip_model, self.clip_preprocess)
-                refinement_feats.append(refinement_feat)
-
-            # Match and fuse
-            enriched_feat = match_and_extract(cluster_feature, refinement_feats, top_k=1)
-            enriched_cluster_features.append(enriched_feat)
+                matched_features_per_target.append((matched_points_cluster, matched_points_refinement))
+                # Visualize the keypoint matching
+                visualize_keypoint_matching(cluster_image, refinement_image, kp_cluster, kp_refinement, matches)
+            matched_features.append(matched_features_per_target)
+            
+        # TODO: Create a fusion of clustered gaussians and the refinement features
+        fused_predictions = []
+        for t_i in range(len(clusters)):
+            for i, cluster in enumerate(clusters[t_i]):
+                matched_features = matched_features[t_i][i]  # Get the matched features for this cluster
+                fused_features = self.fuse_gaussians_with_refinement_features(cluster, matched_features)
+                prediction = self.gaussian_mlp(fused_features)  # Forward pass through the MLP
+                fused_predictions.append(prediction)
+                
+                
+        # TODO: Forward the fusion to the MLP and get the incremental prediction
+        
+        
         
         for t_i in range(b*t):  # Iterate over target views spread across batches
             current_target_gaussians = Gaussians(
