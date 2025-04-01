@@ -16,14 +16,15 @@ defaults:
 #   - experiment: panoptic
 
 wandb:
-  project: mvsplat
-  entity: placeholder
-  name: placeholder
+  project: MV_Thesis
+  entity: rucci-2053183
+  # name: Mv_KD_scratch_Lambda1_Boundend_Rt
+  name: Mv_scratch
   mode: disabled
   id: null
 
-mode: test
-enable_refinement: true
+mode: train #  here train means knowledge distillation 
+enable_refinement: false
 
 dataset:
   overfit_to_scene: null
@@ -36,7 +37,7 @@ data_loader:
   train:
     num_workers: 10
     persistent_workers: true
-    batch_size: 1
+    batch_size: 6
     seed: 1234
   test:
     num_workers: 4

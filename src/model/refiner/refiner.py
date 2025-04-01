@@ -88,8 +88,9 @@ class Refiner(nn.Module):
                 
                 # Batch contains a set of extrinsics, intrinsics, near, far and image
                 _, v, _, _ = batch['extrinsics'].shape
-                batch['near'] = repeat(batch['near'], 'b -> b v', v=v)
-                batch['far'] = repeat(batch['far'], 'b -> b v ', v=v)
+                # when the batch size is 1
+                # batch['near'] = repeat(batch['near'], 'b -> b v', v=v)
+                # batch['far'] = repeat(batch['far'], 'b -> b v ', v=v)
 
                 # 🔥 Early stopping variables
                 best_loss = float("inf")

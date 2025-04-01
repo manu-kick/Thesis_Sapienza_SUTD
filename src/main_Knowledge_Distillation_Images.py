@@ -19,6 +19,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+
 
 # Configure beartype and jaxtyping.
 with install_import_hook(
@@ -133,7 +135,8 @@ def train(cfg_dict: DictConfig):
         enable_progress_bar=cfg.mode == "test",
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         max_steps=cfg.trainer.max_steps,
-        num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
+        # num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
+        num_sanity_val_steps=0,
     )
     torch.manual_seed(cfg_dict.seed + trainer.global_rank)
 
@@ -170,13 +173,21 @@ def train(cfg_dict: DictConfig):
         global_rank=trainer.global_rank,
     )
 
-    if cfg.mode == "train":
+    # Finetune or continue training
+    if cfg.mode == "train" and checkpoint_path is not None and not cfg.checkpointing.resume:
         model_wrapper = ModelWrapper_KD_IMGS.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
         print(cyan(f"Loaded weigths from {checkpoint_path}."))
 
         model_wrapper = ModelWrapper_KD_IMGS(**model_kwargs)
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=None)
-    else:
+    
+    # Training from scratch
+    if cfg.mode == "train" and (checkpoint_path is None): # Retrain mv from scratch
+        model_wrapper = ModelWrapper_KD_IMGS(**model_kwargs)
+        trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=None)
+        
+    # Test
+    if cfg.mode == 'test':
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
         # Remove unwanted keys from state_dict

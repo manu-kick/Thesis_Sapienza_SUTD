@@ -145,7 +145,7 @@ class ModelWrapper_KD_IMGS(LightningModule):
         _, _, r, _, _, _ = batch["refinement"]["image"].shape
         
         # Export this batch as a torch file in the /outputs/saved_batches
-        torch.save(batch, f"outputs/batches_refinement_UniformSampling/batch_{batch_idx}.pt")
+        # torch.save(batch, f"outputs/batches_refinement_UniformSampling/batch_{batch_idx}.pt")
 
         raw_gaussians = self.encoder(
             batch["context"],
@@ -179,8 +179,12 @@ class ModelWrapper_KD_IMGS(LightningModule):
             batch['refinement']['intrinsics'] = rearrange(batch['refinement']['intrinsics'], "b t r i j -> (b t) r i j", r=r)
             batch['refinement']['image'] = rearrange(batch['refinement']['image'], "b t r c h w -> (b t) r c h w", r=r)
             batch['refinement']['index'] = rearrange(batch['refinement']['index'], "b t r -> (b t) r")
-            batch['refinement']['near'] = rearrange(batch['refinement']['near'], "b r -> (b r)")
-            batch['refinement']['far'] = rearrange(batch['refinement']['far'], "b r -> (b r)")    
+            batch["refinement"]['near'] = repeat(batch['refinement']['near'],'b t -> b t r', r=r)
+            batch["refinement"]['far'] = repeat(batch['refinement']['far'],'b t -> b t r', r=r)
+            
+            batch['refinement']['near'] = repeat(batch['refinement']['near'], "b t r -> (b t) r")
+            batch['refinement']['far'] = repeat(batch['refinement']['far'], "b t r -> (b t) r")    
+            
     
             context_rearranged = rearrange(batch["context"]["image"], "b v c h w -> (b v) c h w")
             target_rearranged = rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w")
@@ -237,8 +241,8 @@ class ModelWrapper_KD_IMGS(LightningModule):
                     gaussians=current_target_gaussians,
                     extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
                     intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
-                    near=batch["refinement"]["near"].unsqueeze(0), #
-                    far=batch["refinement"]["far"].unsqueeze(0), #
+                    near=batch["refinement"]["near"][t_i].unsqueeze(0), #
+                    far=batch["refinement"]["far"][t_i].unsqueeze(0), #
                     image_shape=(h, w),
                     depth_mode=None,
                     use_scale_and_rotation=True,
@@ -247,8 +251,8 @@ class ModelWrapper_KD_IMGS(LightningModule):
                     gaussians=refined_gaussians,
                     extrinsics=batch["refinement"]["extrinsics"][t_i].unsqueeze(0),
                     intrinsics=batch["refinement"]["intrinsics"][t_i].unsqueeze(0),
-                    near=batch["refinement"]["near"].unsqueeze(0),
-                    far=batch["refinement"]["far"].unsqueeze(0),
+                    near=batch["refinement"]["near"][t_i].unsqueeze(0),
+                    far=batch["refinement"]["far"][t_i].unsqueeze(0),
                     image_shape=(h, w),
                     depth_mode=None,
                     use_scale_and_rotation=True,

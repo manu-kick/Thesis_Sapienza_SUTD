@@ -18,7 +18,8 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-os.environ["CUDA_VISIBLE_DEVICES"]="2"
+
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 
 # Configure beartype and jaxtyping.
@@ -36,8 +37,7 @@ with install_import_hook(
     from src.model.decoder import get_decoder
     from src.model.encoder import get_encoder
     from src.model.refiner import get_refiner
-    from src.model.model_wrapper_knowledge_distillation_mlp_v2 import ModelWrapper_KD_MLP
-    # from src.model.model_wrapper_knowledge_distillation_mlp import ModelWrapper_KD_MLP
+    from src.model.model_wrapper_kd_RefGaussian_precomputation import ModelWrapper_KD_RefinementPrecomputation
 
 
 def cyan(text: str) -> str:
@@ -164,8 +164,8 @@ def train(cfg_dict: DictConfig):
         "refiner": refiner if cfg.enable_refinement else None,
         "refiner_cfg": cfg.dataset.refinement_cfg if cfg.enable_refinement else None,
         "step_tracker": step_tracker,
-    }
-        
+        }
+                        
     data_module = DataModule(
         cfg.dataset,
         cfg.data_loader,
@@ -173,35 +173,15 @@ def train(cfg_dict: DictConfig):
         global_rank=trainer.global_rank,
     )
 
-    if cfg.mode == "train":
-        model_wrapper = ModelWrapper_KD_MLP.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
+    # Finetune or continue training
+    if cfg.mode == "train" :
+        model_wrapper = ModelWrapper_KD_RefinementPrecomputation.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
         print(cyan(f"Loaded weigths from {checkpoint_path}."))
 
-        model_wrapper = ModelWrapper_KD_MLP(**model_kwargs)
+        model_wrapper = ModelWrapper_KD_RefinementPrecomputation(**model_kwargs)
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=None)
-    else:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
-
-        # Remove unwanted keys from state_dict
-        ignored_keys = {"refiner.means", "refiner.harmonics", "refiner.opacities", "refiner.scales", "refiner.rotations"}
-        filtered_state_dict = {k: v for k, v in checkpoint["state_dict"].items() if k not in ignored_keys}
-
-        # Load the model with the filtered state_dict
-        model_wrapper = ModelWrapper_KD_MLP.load_from_checkpoint(
-            checkpoint_path,
-            **model_kwargs,
-            strict=False  # Allows missing keys without error
-        )
-
-        # Manually load the filtered state_dict to avoid unexpected keys
-        model_wrapper.load_state_dict(filtered_state_dict, strict=False)
-
-        trainer.test(
-            model_wrapper,
-            datamodule=data_module,
-            ckpt_path=checkpoint_path,
-        )
-
+    
+   
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")

@@ -144,7 +144,7 @@ class ModelWrapper(LightningModule):
         
         
         im = output.color[0][0]
-        Image.fromarray((im*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"C:\\Users\\rucci\\OneDrive\\Desktop\\manu\\uni\\mvsplat\\output\\rendered.png")
+        # Image.fromarray((im*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"C:\\Users\\rucci\\OneDrive\\Desktop\\manu\\uni\\mvsplat\\output\\rendered.png")
         target_gt = batch["target"]["image"]
 
         # Compute metrics.

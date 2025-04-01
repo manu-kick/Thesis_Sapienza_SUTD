@@ -29,5 +29,5 @@ refinement_cfg:
   num_refinement_views: 4
   index_path: assets/evaluation_index_re10k.json # when using refinement_context
   random_target_selection: false
-  refinement_lambda_loss: 3.0
+  refinement_lambda_loss: 1.0
   refinement_loss: kl # kl, mse
