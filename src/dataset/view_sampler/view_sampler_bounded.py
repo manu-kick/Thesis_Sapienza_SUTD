@@ -7,50 +7,43 @@ from torch import Tensor
 
 from .view_sampler import ViewSampler
 
-# Configuration class for the ViewSamplerBounded.
-# This defines various hyperparameters controlling the selection of views.
+
 @dataclass
 class ViewSamplerBoundedCfg:
-    name: Literal["bounded"]  # Name identifier for this sampler type.
-    num_context_views: int  # Number of context views to be sampled.
-    num_target_views: int  # Number of target views to be sampled.
-    min_distance_between_context_views: int  # Minimum spacing between context views.
-    max_distance_between_context_views: int  # Maximum spacing between context views.
-    min_distance_to_context_views: int  # Minimum distance from context to target views.
-    warm_up_steps: int  # Number of warm-up steps where distances increase progressively.
-    initial_min_distance_between_context_views: int  # Initial min distance (before warm-up ends).
-    initial_max_distance_between_context_views: int  # Initial max distance (before warm-up ends).
+    name: Literal["bounded"]
+    num_context_views: int
+    num_target_views: int
+    min_distance_between_context_views: int
+    max_distance_between_context_views: int
+    min_distance_to_context_views: int
+    warm_up_steps: int
+    initial_min_distance_between_context_views: int
+    initial_max_distance_between_context_views: int
 
-# A bounded view sampler class inheriting from ViewSampler.
-# It selects a set of context and target views based on the defined configuration.
+
 class ViewSamplerBounded(ViewSampler[ViewSamplerBoundedCfg]):
-    
-    # Gradually adjusts a value over time using a scheduling function.
-    # This is used to progressively increase min/max distances during training.
     def schedule(self, initial: int, final: int) -> int:
-        fraction = self.global_step / self.cfg.warm_up_steps  # Compute progress in warm-up steps.
-        return min(initial + int((final - initial) * fraction), final)  # Linear interpolation.
+        fraction = self.global_step / self.cfg.warm_up_steps
+        return min(initial + int((final - initial) * fraction), final)
 
-    # Samples context and target views given scene camera parameters.
     def sample(
         self,
         scene: str,
-        extrinsics: Float[Tensor, "view 4 4"],  # Extrinsics matrix for each view (4x4 transformation).
-        intrinsics: Float[Tensor, "view 3 3"],  # Intrinsics matrix for each view (3x3 camera parameters).
-        device: torch.device = torch.device("cpu"),  # Device on which to run computations.
+        extrinsics: Float[Tensor, "view 4 4"],
+        intrinsics: Float[Tensor, "view 3 3"],
+        device: torch.device = torch.device("cpu"),
     ) -> tuple[
-        Int64[Tensor, " context_view"],  # Indices of sampled context views.
-        Int64[Tensor, " target_view"],  # Indices of sampled target views.
+        Int64[Tensor, " context_view"],  # indices for context views
+        Int64[Tensor, " target_view"],  # indices for target views
     ]:
-        num_views, _, _ = extrinsics.shape  # Get total number of available views.
+        num_views, _, _ = extrinsics.shape
 
-        # Determine the spacing between context views based on training/testing stage.
+        # Compute the context view spacing based on the current global step.
         if self.stage == "test":
-            # During testing, the full maximum gap is always used.
+            # When testing, always use the full gap.
             max_gap = self.cfg.max_distance_between_context_views
             min_gap = self.cfg.max_distance_between_context_views
         elif self.cfg.warm_up_steps > 0:
-            # During training, if warm-up is enabled, adjust the min/max gaps dynamically.
             max_gap = self.schedule(
                 self.cfg.initial_max_distance_between_context_views,
                 self.cfg.max_distance_between_context_views,
@@ -60,61 +53,49 @@ class ViewSamplerBounded(ViewSampler[ViewSamplerBoundedCfg]):
                 self.cfg.min_distance_between_context_views,
             )
         else:
-            # If no warm-up, use the final specified min/max gaps.
             max_gap = self.cfg.max_distance_between_context_views
             min_gap = self.cfg.min_distance_between_context_views
 
-        # BUG NOTE: The original implementation contains an incorrect line which is left unchanged 
-        # to match previous configurations.
+        # Pick the gap between the context views.
+        # NOTE: we keep the bug untouched to follow initial pixelsplat cfgs
         if not self.cameras_are_circular:
-            max_gap = min(num_views - 1, min_gap)  # BUG: Should be `max_gap = min(num_views - 1, max_gap)`
-        
-        # Ensure the minimum gap is large enough based on context constraints.
+            max_gap = min(num_views - 1, min_gap) #Original code
+            # max_gap = min(num_views - 1, max_gap) # with bs 7 last validation step is 114;
         min_gap = max(2 * self.cfg.min_distance_to_context_views, min_gap)
-
-        # If the computed gap range is invalid, raise an error.
         if max_gap < min_gap:
             raise ValueError("Example does not have enough frames!")
-
-        # Randomly sample a context view spacing within the allowed range.
         context_gap = torch.randint(
             min_gap,
-            max_gap + 1,  # `+1` because randint is exclusive on the upper bound.
+            max_gap + 1,
             size=tuple(),
             device=device,
         ).item()
 
-        # Randomly select a left context view index.
+        # Pick the left and right context indices.
         index_context_left = torch.randint(
             num_views if self.cameras_are_circular else num_views - context_gap,
             size=tuple(),
             device=device,
         ).item()
-
-        # During testing, always pick the first available view.
         if self.stage == "test":
             index_context_left = index_context_left * 0
-        
-        # Right context index is offset by the chosen gap.
         index_context_right = index_context_left + context_gap
 
-        # Special handling for overfitting mode: fix indices to a fixed range.
         if self.is_overfitting:
             index_context_left *= 0
             index_context_right *= 0
-            index_context_right += max_gap  # Fixed to max_gap.
+            index_context_right += max_gap
 
-        # Select target view indices.
+        # Pick the target view indices.
         if self.stage == "test":
-            # In testing, target views span the full range between the context views.
+            # When testing, pick all.
             index_target = torch.arange(
                 index_context_left,
                 index_context_right + 1,
                 device=device,
             )
         else:
-            # During training, target views are randomly selected within the context range,
-            # while maintaining a minimum distance from context views.
+            # When training or validating (visualizing), pick at random.
             index_target = torch.randint(
                 index_context_left + self.cfg.min_distance_to_context_views,
                 index_context_right + 1 - self.cfg.min_distance_to_context_views,
@@ -122,20 +103,20 @@ class ViewSamplerBounded(ViewSampler[ViewSamplerBoundedCfg]):
                 device=device,
             )
 
-        # Apply modular arithmetic for circular datasets.
+        # Apply modulo for circular datasets.
         if self.cameras_are_circular:
             index_target %= num_views
             index_context_right %= num_views
 
         return (
-            torch.tensor((index_context_left, index_context_right)),  # Context view indices.
-            index_target,  # Target view indices.
+            torch.tensor((index_context_left, index_context_right)),
+            index_target,
         )
 
     @property
     def num_context_views(self) -> int:
-        return 2  # Always select two context views (left & right).
+        return 2
 
     @property
     def num_target_views(self) -> int:
-        return self.cfg.num_target_views  # Defined by configuration.
+        return self.cfg.num_target_views

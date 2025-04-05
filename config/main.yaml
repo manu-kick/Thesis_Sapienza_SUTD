@@ -28,8 +28,8 @@ enable_refinement: false
 
 dataset:
   overfit_to_scene: null
-  view_sampler:
-    index_path: assets/evaluation_index_re10k.json
+  # view_sampler:
+  #   index_path: assets/evaluation_index_re10k.json
     # index_path: assets/evaluation_index_basketball_nctx2.json
 
 data_loader:
@@ -37,7 +37,7 @@ data_loader:
   train:
     num_workers: 10
     persistent_workers: true
-    batch_size: 6
+    batch_size: 7
     seed: 1234
   test:
     num_workers: 4
@@ -56,7 +56,7 @@ optimizer:
   cosine_lr: true
 
 checkpointing:
-  load: checkpoints/re10k.ckpt
+  # load: checkpoints/re10k.ckpt
   every_n_train_steps: 20000  # 5000
   save_top_k: -1
   pretrained_model: null

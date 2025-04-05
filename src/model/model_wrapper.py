@@ -152,7 +152,7 @@ class ModelWrapper(LightningModule):
             rearrange(target_gt, "b v c h w -> (b v) c h w"),
             rearrange(output.color, "b v c h w -> (b v) c h w"),
         )
-        self.log("train/psnr_probabilistic", psnr_probabilistic.mean())
+        self.log("train/psnr_probabilistic", psnr_probabilistic.mean(), sync_dist=True)
 
         # Compute and log loss.
         total_loss = 0
@@ -160,7 +160,7 @@ class ModelWrapper(LightningModule):
             loss = loss_fn.forward(output, batch, gaussians, self.global_step)
             self.log(f"loss/{loss_fn.name}", loss)
             total_loss = total_loss + loss
-        self.log("loss/total", total_loss)
+        self.log("loss/total", total_loss, sync_dist=True)
 
         if (
             self.global_rank == 0
@@ -441,10 +441,10 @@ class ModelWrapper(LightningModule):
                 self.logger.log_image(k, [prep_image(image)], step=self.global_step)
 
         # Run video validation step.
-        self.render_video_interpolation(batch)
-        self.render_video_wobble(batch)
-        if self.train_cfg.extended_visualization:
-            self.render_video_interpolation_exaggerated(batch)
+        # self.render_video_interpolation(batch)
+        # self.render_video_wobble(batch)
+        # if self.train_cfg.extended_visualization:
+        #     self.render_video_interpolation_exaggerated(batch)
 
     @rank_zero_only
     def render_video_wobble(self, batch: BatchedExample) -> None:

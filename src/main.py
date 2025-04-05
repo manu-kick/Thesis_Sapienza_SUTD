@@ -18,7 +18,7 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-os.environ["CUDA_VISIBLE_DEVICES"]="2"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 
 
@@ -123,8 +123,8 @@ def train(cfg_dict: DictConfig):
         enable_progress_bar=cfg.mode == "test",
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         max_steps=cfg.trainer.max_steps,
-        # num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
-        num_sanity_val_steps=0,
+        num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
+        enable_model_summary=True, log_every_n_steps=1
     )
     torch.manual_seed(cfg_dict.seed + trainer.global_rank)
 

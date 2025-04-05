@@ -22,6 +22,9 @@ from .view_sampler import ViewSampler
 from .view_sampler.view_sampler_evaluation import ViewSamplerEvaluation
 from .view_sampler import get_view_sampler
 
+import torch.distributed as dist
+
+
 # DEBUGGER
 import os
 import sys
@@ -107,6 +110,12 @@ class DatasetRE10k(IterableDataset):
         return [lst[x] for x in indices]
 
     def __iter__(self):
+        # To enable data sharding across multiple gpus
+        # rank = dist.get_rank() if dist.is_initialized() else 0
+        # world_size = dist.get_world_size() if dist.is_initialized() else 1
+        # example_idx = 0
+
+        
         # Chunks must be shuffled here (not inside __init__) for validation to show
         # random chunks.
         if self.stage in (("train", "val") if self.cfg.shuffle_val else ("train")):
@@ -183,6 +192,8 @@ class DatasetRE10k(IterableDataset):
                     
                 # Skip the example if the field of view is too wide.
                 if (get_fov(intrinsics).rad2deg() > self.cfg.max_fov).any():
+                    if self.stage == 'val':
+                        print(f"Skip {self.stage} ==> scene, FOV too wide!")
                     continue
 
                 # Load the images.
@@ -251,7 +262,9 @@ class DatasetRE10k(IterableDataset):
                 }
                 if self.stage == "train" and self.cfg.augment and self.cfg.refinement==False: #Note when we refine we don't augment otherwise we screw up  
                     example = apply_augmentation_shim(example)
+                # if example_idx % world_size == rank:
                 yield apply_crop_shim(example, tuple(self.cfg.image_shape))
+                # example_idx += 1
 
     def convert_poses(
         self,

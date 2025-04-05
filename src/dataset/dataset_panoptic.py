@@ -82,6 +82,8 @@ class DatasetPanoptic(IterableDataset):
                     for k, v in json.load(f).items()
                 }
             print(f"Loaded evaluation index from {path_eval_index}.")
+            
+        
     
     def shuffle(self, lst: list) -> list:
         indices = torch.randperm(len(lst))
