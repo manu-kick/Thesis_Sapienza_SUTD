@@ -23,6 +23,7 @@ from .shims.crop_shim import apply_crop_shim
 from .types import Stage
 from .view_sampler import ViewSampler
 import random
+import numpy as np
 
 
 
@@ -36,7 +37,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.join(os.path.dirname(__file__), '..'), '..')))
 
 
-class PanopticViewSampler:
+class KDPanopticViewSampler:
     def __init__(self, strategy, num_targets=4):
         self.strategy = strategy
         self.num_targets = num_targets
@@ -133,11 +134,22 @@ class PanopticViewSampler:
         return context_idx, target_idx, boundary
 
             
-
+def load_gaussians(path):
+    gaussians = {}
+    folders = [name for name in os.listdir(path) if os.path.isdir(os.path.join(path, name))]
+    # file = dict(np.load(path))
+    for folder in folders:
+        gaussians[folder] = {}
+        file_path = os.path.join(path,f'{folder}/params.npz')
+        file = dict(np.load(file_path))
+        for key in list(file.keys()):
+            gaussians[folder][key] = file[key]
+    
+    return gaussians
 
 @dataclass
-class DatasetPanopticCfg(DatasetCfgCommon):
-    name: Literal["panoptic"]
+class KDDatasetPanopticCfg(DatasetCfgCommon):
+    name: Literal["kdpanoptic"]
     roots: list[Path]
     test_len: int
     max_fov: float
@@ -148,12 +160,11 @@ class DatasetPanopticCfg(DatasetCfgCommon):
     shuffle_val: bool = True
     refinement: bool = False
     
-    
 
-class DatasetPanoptic(IterableDataset):
+class KDDatasetPanoptic(IterableDataset):
     def __init__(
         self,
-        cfg: DatasetPanopticCfg,
+        cfg: KDDatasetPanopticCfg,
         stage: Stage,
         view_sampler: ViewSampler,
         *args,  # <-- Allow extra positional arguments
@@ -168,6 +179,9 @@ class DatasetPanoptic(IterableDataset):
         chunks: list[Path]
         self.near = 1.0
         self.far = 100.0
+        
+        # Create the refined gaussians dict 
+        self.refined_gaussians = load_gaussians(path=Path('datasets/panoptic_gaussian_parameters/Gaussian_KD_MVSPLAT'))
         
         # Collect chunks.
         self.chunks = []
@@ -187,7 +201,7 @@ class DatasetPanoptic(IterableDataset):
         print(f"Data length {self.data_length}")
         self.step_tracker = view_sampler.step_tracker
         self.global_step = self.step_tracker.get_step()
-        self.view_sampler = PanopticViewSampler(strategy='cam_proximity', num_targets=2)
+        self.view_sampler = KDPanopticViewSampler(strategy='cam_proximity', num_targets=2)
         if self.stage == 'test':
             print('Test Panoptic...')
             
@@ -217,6 +231,8 @@ class DatasetPanoptic(IterableDataset):
                 for example in chunk:
                     extrinsics, intrinsics = self.convert_poses(example["cameras"])
                     scene = example['key']
+                    seq = scene.split('_')[0]
+                    timestep = int(scene.split('_')[-1])
                     context_indices, target_indices, boundary = self.view_sampler.sample(extrinsics=extrinsics, iteration=self.global_step+1, max_iterations=300000)
                     
                     # context_indices = [9,4]
@@ -243,6 +259,14 @@ class DatasetPanoptic(IterableDataset):
                     
                     nf_scale = scale if self.cfg.baseline_scale_bounds else 1.0
                     
+                    ref = {
+                        'means3D': self.refined_gaussians[seq]['means3D'][timestep],
+                        'rotations': torch.nn.functional.normalize(torch.tensor(self.refined_gaussians[seq]['unnorm_rotations'][timestep])),
+                        # fixed values for different frames
+                        'opacities': torch.sigmoid(torch.tensor(self.refined_gaussians[seq]['logit_opacities'])), 
+                        'scales': torch.exp(torch.tensor(self.refined_gaussians[seq]['log_scales'])),
+                    }
+                    
                    
                     # Construct the example
                     example = {
@@ -263,7 +287,8 @@ class DatasetPanoptic(IterableDataset):
                             "index": target_indices,
                         },
                         "scene": scene,
-                        "ctx_boundary" : boundary
+                        "ctx_boundary" : boundary,
+                        'refined_gaussians': ref,
                     }
                     
                     yield apply_crop_shim(example, tuple(self.cfg.image_shape))

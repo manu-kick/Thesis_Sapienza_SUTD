@@ -110,43 +110,55 @@ if __name__ == "__main__":
         
         # Process both sets and combine them
         for SEQUENCE in SEQUENCES:
+            all_intrinsics[SEQUENCE] = {}
+            all_extrinsics[SEQUENCE] = {}
+            all_images[SEQUENCE] = {}
+            
+            for t in range(150):
+                all_intrinsics[SEQUENCE][t] = {}
+                all_extrinsics[SEQUENCE][t] = {}
+                all_images[SEQUENCE][t] = {}
+            
             for stage in ["train", "test"]:
                 selected_views = train_views if stage == "train" else test_views
                 metadata = json.load(open(os.path.join(BASE_DATASET_DIR, f"{SEQUENCE}/{stage}_meta.json"), 'r'))
                 frames = len(metadata['k'])
                 
-                all_intrinsics[SEQUENCE] = {}
-                all_extrinsics[SEQUENCE] = {}
-                all_images[SEQUENCE] = {}
-                    
-                for t in range(frames):
-                    all_intrinsics[SEQUENCE][t] = {}
-                    all_extrinsics[SEQUENCE][t] = {}
-                    all_images[SEQUENCE][t] = {}
+                for t in range(frames):    
                     for cam in selected_views:
-                        extr, intr, near, far = build_camera_info(timestep, metadata, cam)
+                        extr, intr, near, far = build_camera_info(t, metadata, cam)
 
                         # Store camera parameters
                         all_intrinsics[SEQUENCE][t][cam] = intr
                         all_extrinsics[SEQUENCE][t][cam] = torch.tensor(extr, dtype=torch.float32)
 
                         # Load image as raw bytes
-                        image_path = os.path.join(BASE_DATASET_DIR, f"{SEQUENCE}/ims/{cam}/{timestep:06d}.jpg")
+                        image_path = os.path.join(BASE_DATASET_DIR, f"{SEQUENCE}/ims/{cam}/{t:06d}.jpg")
                         if not os.path.exists(image_path):
                             print(f"Warning: Image {image_path} not found. Skipping camera {cam}...")
                             continue
 
                         all_images[SEQUENCE][t][cam] = torch.tensor(np.array(np.memmap(image_path, dtype="uint8", mode="r")), dtype=torch.uint8)
 
-                    # Sort all cameras by ID in each timestep
-                    sorted_cam_ids = sorted(all_intrinsics[SEQUENCE][t].keys())
+            # After processing all cams for all frames:
+            for t in range(frames):
+                sorted_cam_ids = sorted(all_intrinsics[SEQUENCE][t].keys())
+
+                # Some timesteps might be missing images (e.g., from skipped cams)
+                if len(sorted_cam_ids) == 0:
+                    continue
+
+                try:
                     sample_t = {
                         "cam_ids": torch.tensor(sorted_cam_ids, dtype=torch.int64),
                         "cameras": [construct_camera_info(all_extrinsics[SEQUENCE][t][cam], all_intrinsics[SEQUENCE][t][cam]) for cam in sorted_cam_ids],
-                        "images": [all_images[SEQUENCE][t][cam] for cam in sorted_cam_ids],  # Maintain order
-                        "key": f"{SEQUENCE}_{t}"  # Single key for the whole dataset
-                    }    
+                        "images": [all_images[SEQUENCE][t][cam] for cam in sorted_cam_ids],
+                        "key": f"{SEQUENCE}_{t}"
+                    }
                     dataset.append(sample_t)
+                except KeyError as e:
+                    print(f"Missing data for SEQUENCE {SEQUENCE}, frame {t}, skipping. Error: {e}")
+
             print(f'{SEQUENCE} done')
         
 

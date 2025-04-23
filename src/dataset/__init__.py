@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 from ..misc.step_tracker import StepTracker
 from .dataset_re10k import DatasetRE10k, DatasetRE10kCfg
 from .dataset_panoptic import DatasetPanoptic, DatasetPanopticCfg
+from .dataset_kdpanoptic import KDDatasetPanoptic, KDDatasetPanopticCfg
 from .types import Stage
 from .view_sampler import get_view_sampler
 from .view_sampler.refinement_view_sampler_camera_proximity import RefinementViewSamplerCameraProximityCfg
@@ -13,18 +14,20 @@ from .view_sampler.refinement_view_sampler_random import RefinementViewSamplerRa
 
 DATASETS: dict[str, Dataset] = {
     "re10k": DatasetRE10k,
-    "panoptic": DatasetPanoptic
+    "panoptic": DatasetPanoptic,
+    "kdpanoptic": KDDatasetPanoptic,
 }
 
 DATASET_CONFIGS = {
     "re10k": DatasetRE10kCfg,
-    "panoptic": DatasetPanopticCfg
+    "panoptic": DatasetPanopticCfg,
+    "kdpanoptic": KDDatasetPanopticCfg,
 }
 
-DatasetCfg = DatasetRE10kCfg | DatasetPanopticCfg
+DatasetCfg = DatasetRE10kCfg | DatasetPanopticCfg | KDDatasetPanopticCfg
 
 def get_dataset(
-    cfg: DatasetRE10kCfg | DatasetPanopticCfg,
+    cfg: DatasetRE10kCfg | DatasetPanopticCfg | KDDatasetPanopticCfg,
     stage: Stage,
     step_tracker: StepTracker | None,
 ) -> Dataset:
@@ -66,5 +69,6 @@ def get_dataset(
             step_tracker,
         )
         
+    
     
     return DATASETS[cfg.name](cfg, stage, view_sampler, refinement_view_sampler)

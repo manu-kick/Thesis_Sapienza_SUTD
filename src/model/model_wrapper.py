@@ -126,12 +126,13 @@ class ModelWrapper(LightningModule):
 
     def training_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
-        _, _, _, h, w = batch["target"]["image"].shape
+        _, _, _, h, w = batch["target"]["image"].shape # panoptic => h=352 w=640, re10k h=256 w=256
 
         # Run the model.
         gaussians = self.encoder(
             batch["context"], self.global_step, False, scene_names=batch["scene"]
         )
+        
         output = self.decoder.forward(
             gaussians,
             batch["target"]["extrinsics"],
@@ -142,10 +143,12 @@ class ModelWrapper(LightningModule):
             depth_mode=self.train_cfg.depth_mode,
         )
         
-        
-        im = output.color[0][0]
-        # Image.fromarray((im*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"C:\\Users\\rucci\\OneDrive\\Desktop\\manu\\uni\\mvsplat\\output\\rendered.png")
+        if self.global_step % 50 == 0:
+            im = output.color[0][0]
+            Image.fromarray((im*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"outputs/debug_panoptic/step_{self.global_step}.png")
         target_gt = batch["target"]["image"]
+        # Image.fromarray((target_gt[0][0]*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"outputs/debug_panoptic/target_step_{self.global_step}_panoptic_256.png")
+        
 
         # Compute metrics.
         psnr_probabilistic = compute_psnr(
@@ -166,12 +169,18 @@ class ModelWrapper(LightningModule):
             self.global_rank == 0
             and self.global_step % self.train_cfg.print_log_every_n_steps == 0
         ):
+            if(type(batch['context']['index']) == torch.Tensor):
+                context_list = batch['context']['index'].tolist()
+            else:
+                context_list = torch.stack(batch['context']['index']).reshape(-1).tolist()
+                
             print(
                 f"train step {self.global_step}; "
                 f"scene = {[x[:20] for x in batch['scene']]}; "
-                f"context = {batch['context']['index'].tolist()}; "
-                f"bound = [{batch['context']['near'].detach().cpu().numpy().mean()} "
-                f"{batch['context']['far'].detach().cpu().numpy().mean()}]; "
+                f"context = {context_list}; "
+                # f"bound = [{batch['context']['near'].detach().cpu().numpy().mean()} "
+                # f"{batch['context']['far'].detach().cpu().numpy().mean()}]; ",
+                f"ctx_boundary = {[boundary.item() for boundary in batch['ctx_boundary']]} "
                 f"loss = {total_loss:.6f}"
             )
         self.log("info/near", batch["context"]["near"].detach().cpu().numpy().mean())
@@ -318,7 +327,38 @@ class ModelWrapper(LightningModule):
                 print(f"PSNR improvement batch {batch_idx}: {np.mean(psnr_impr)}")
                 print(f"SSIM improvement batch {batch_idx}: {np.mean(ssim_impr)}")
                 print(f"LPIPS improvement batch {batch_idx}: {np.mean(lpips_impr)}")
-            
+    
+        (scene,) = batch["scene"]
+        name = get_cfg()["wandb"]["name"]
+        path = self.test_cfg.output_path / name
+        images_prob = output_mv.color[0]
+        rgb_gt = batch["target"]["image"][0]
+
+        # Save images.
+        if self.test_cfg.save_image:
+            for index, color in zip(batch["target"]["index"][0], images_prob):
+                save_image(color, path / scene / f"color/{index:0>6}.png")
+                
+        # compute scores
+        if self.test_cfg.compute_scores:
+            rgb = images_prob
+
+            if f"psnr" not in self.test_step_outputs:
+                self.test_step_outputs[f"psnr"] = []
+            if f"ssim" not in self.test_step_outputs:
+                self.test_step_outputs[f"ssim"] = []
+            if f"lpips" not in self.test_step_outputs:
+                self.test_step_outputs[f"lpips"] = []
+
+            self.test_step_outputs[f"psnr"].append(
+                compute_psnr(rgb_gt, rgb).mean().item()
+            )
+            self.test_step_outputs[f"ssim"].append(
+                compute_ssim(rgb_gt, rgb).mean().item()
+            )
+            self.test_step_outputs[f"lpips"].append(
+                compute_lpips(rgb_gt, rgb).mean().item()
+            )
             
         # save video
         if self.test_cfg.save_video:
@@ -362,15 +402,20 @@ class ModelWrapper(LightningModule):
             )
             self.benchmarker.summarize()
 
-    @rank_zero_only
+    # @rank_zero_only
     def validation_step(self, batch, batch_idx):
         batch: BatchedExample = self.data_shim(batch)
 
+        if(type(batch['context']['index']) == torch.Tensor):
+                context_list = batch['context']['index'].tolist()
+        else:
+            context_list = torch.stack(batch['context']['index']).reshape(-1).tolist()
+                
         if self.global_rank == 0:
             print(
                 f"validation step {self.global_step}; "
                 f"scene = {[a[:20] for a in batch['scene']]}; "
-                f"context = {batch['context']['index'].tolist()}"
+                f"context = {context_list}"
             )
 
         # Render Gaussians.

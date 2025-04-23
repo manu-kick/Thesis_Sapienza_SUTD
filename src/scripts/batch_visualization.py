@@ -104,7 +104,9 @@ def visualize_cameras(K_list, RT_list, colors, selected_batch):
 # Load the .pt file
 selected_batch = 1
 selected_target = 'all' # idx | 'all' Select the first target camera
-TORCH_FILE = Path(f'C:/Users/rucci/OneDrive/Desktop/manu/uni/Mv_Thesis/outputs/saved_batches/batch_{selected_batch}.pt')
+# TORCH_FILE = Path(f'C:/Users/rucci/OneDrive/Desktop/manu/uni/Mv_Thesis/outputs/saved_batches/batch_{selected_batch}.pt')
+TORCH_FILE = Path(f'/home/tesista10/Thesis_Sapienza_SUTD/outputs/batch_panoptic/batch_0.pt')
+
 file = torch.load(TORCH_FILE, map_location='cpu')
 
 # Extract extrinsics and intrinsics from context, target, and refinement cameras
@@ -149,6 +151,7 @@ for i in range(len(target_extrinsics)):
     RT_list.append(target_extrinsics[i])
     colors.append(target_color)
 
+
 # Add refinement cameras
 for i in range(len(refinement_extrinsics)):
     K_list.append(refinement_intrinsics[i])
@@ -156,9 +159,9 @@ for i in range(len(refinement_extrinsics)):
     colors.append(refinement_color)
 
 # -------------- Visualize -----------------------
-target_idx = file['target']['index'].reshape(-1).tolist()
-ref_idx = file['refinement']['index'].reshape(-1).tolist()
-context_idx = file['context']['index'].reshape(-1).tolist()
+target_idx = file['target']['index'].reshape(-1).tolist() if type(file['target']['index']) == torch.Tensor else torch.stack(file['target']['index']).reshape(-1).tolist()
+context_idx = file['context']['index'].reshape(-1).tolist() if type(file['context']['index']) == torch.Tensor else torch.stack(file['context']['index']).reshape(-1).tolist()
+ref_idx = file['refinement']['index'].reshape(-1).tolist() if type(file['refinement']['index']) == torch.Tensor else torch.stack(file['refinement']['index']).reshape(-1).tolist()
 # Check if overlap between target and refinement indices
 overlap = set(target_idx).intersection(set(ref_idx))
 print('Overlap target-refinment:', overlap)

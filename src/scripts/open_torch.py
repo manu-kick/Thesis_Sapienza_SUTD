@@ -27,7 +27,7 @@
 import torch
 from pathlib import Path
 # TORCH_FILE = Path('/home/tesista10/Thesis_Sapienza_SUTD/datasets/re10k/test/000000.torch')
-TORCH_FILE = Path('/home/tesista10/Thesis_Sapienza_SUTD/datasets/panoptic_torch/panoptic_train.torch')
+TORCH_FILE = Path('/home/tesista10/Thesis_Sapienza_SUTD/datasets/panoptic_torch/train/panoptic_train.torch')
 # TORCH_FILE = Path('/home/tesista10/Thesis_Sapienza_SUTD/datasets/panoptic_torch/basketball_all.torch')
 
 # #LOAD TORCH FILE to check the content

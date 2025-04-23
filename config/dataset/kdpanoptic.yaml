@@ -1,7 +1,7 @@
 defaults:
   - view_sampler: evaluation
 
-name: panoptic
+name: kdpanoptic
 roots: [datasets/panoptic_torch]
 current_sequence: basketball
 make_baseline_1: true

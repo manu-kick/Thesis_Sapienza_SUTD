@@ -18,8 +18,7 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-os.environ["CUDA_VISIBLE_DEVICES"]="3"
-
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 
 # Configure beartype and jaxtyping.
@@ -37,7 +36,7 @@ with install_import_hook(
     from src.model.decoder import get_decoder
     from src.model.encoder import get_encoder
     from src.model.refiner import get_refiner
-    from src.model.model_wrapper import ModelWrapper
+    from src.model.model_wrapper_KDPanoptic import ModelWrapper_KDPanoptic
 
 
 def cyan(text: str) -> str:
@@ -47,7 +46,7 @@ def cyan(text: str) -> str:
 @hydra.main(
     version_base=None,
     config_path="../config",
-    config_name="main",
+    config_name="main_kd_panoptic",
 )
 def train(cfg_dict: DictConfig):
     cfg = load_typed_root_config(cfg_dict)
@@ -78,7 +77,7 @@ def train(cfg_dict: DictConfig):
             mode=cfg_dict.wandb.mode,
             name=f"{cfg_dict.wandb.name} ({output_dir.parent.name}/{output_dir.name})",
             tags=cfg_dict.wandb.get("tags", None),
-            log_model=False,
+            log_model=True,
             save_dir=output_dir,
             config=OmegaConf.to_container(cfg_dict),
             **wandb_extra_kwargs,
@@ -91,16 +90,29 @@ def train(cfg_dict: DictConfig):
     else:
         logger = LocalLogger()
 
-    # Set up checkpointing.
+    # Set up checkpointing: Keep only the best 2 models for each metric and overwrite old ones
     callbacks.append(
         ModelCheckpoint(
-            output_dir / "checkpoints",
-            every_n_train_steps=cfg.checkpointing.every_n_train_steps,
-            save_top_k=cfg.checkpointing.save_top_k,
-            monitor="info/global_step",
-            mode="max",  # save the lastest k ckpt, can do offline test later
+            dirpath=output_dir / "checkpoints",
+            save_top_k=2,  # Keep only the top 2 models for this metric
+            monitor="train_loss",
+            mode="min",  # Lower train loss is better
+            auto_insert_metric_name=False,  # Prevent auto metric name insertion
+            filename="best_train_loss",  # Static name ensures overwriting
         )
     )
+
+    callbacks.append(
+        ModelCheckpoint(
+            dirpath=output_dir / "checkpoints",
+            save_top_k=2,  # Keep only the top 2 models for this metric
+            monitor="val/psnr_mean",
+            mode="max",  # Higher PSNR is better
+            auto_insert_metric_name=False,  # Prevent auto metric name insertion
+            filename="best_val_psnr",  # Static name ensures overwriting
+        )
+    )
+
     for cb in callbacks:
         cb.CHECKPOINT_EQUALS_CHAR = '_'
 
@@ -116,14 +128,14 @@ def train(cfg_dict: DictConfig):
         logger=logger,
         devices="auto",
         num_nodes=cfg.trainer.num_nodes,
-        strategy="ddp" if torch.cuda.device_count() > 1 else "auto",
+        strategy="auto",
         callbacks=callbacks,
         val_check_interval=cfg.trainer.val_check_interval,
         enable_progress_bar=cfg.mode == "test",
         gradient_clip_val=cfg.trainer.gradient_clip_val,
         max_steps=cfg.trainer.max_steps,
-        num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
-        enable_model_summary=True, log_every_n_steps=1
+        # num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
+        num_sanity_val_steps=0,
     )
     torch.manual_seed(cfg_dict.seed + trainer.global_rank)
 
@@ -132,14 +144,7 @@ def train(cfg_dict: DictConfig):
     decoder = get_decoder(cfg.model.decoder, cfg.dataset)
     losses = get_losses(cfg.loss)
 
-    if cfg.enable_refinement:
-        refiner_kwargs = {
-            "name": "refiner",
-            "decoder": decoder,
-            "losses": losses
-        }
-        refiner = get_refiner(**refiner_kwargs)
-        
+    
     model_kwargs = {
         "optimizer_cfg": cfg.optimizer,
         "test_cfg": cfg.test,
@@ -148,25 +153,23 @@ def train(cfg_dict: DictConfig):
         "encoder_visualizer": encoder_visualizer,
         "decoder": decoder,
         "losses": losses,
-        "refiner": refiner if cfg.enable_refinement else None,
         "step_tracker": step_tracker,
     }
         
+
     if cfg.mode == "train" and checkpoint_path is not None and not cfg.checkpointing.resume:
-        # Just load model weights, without optimizer states
-        # e.g., fine-tune from the released weights on other datasets
-        model_wrapper = ModelWrapper.load_from_checkpoint(checkpoint_path, **model_kwargs, strict=True)
+        model_wrapper = ModelWrapper_KDPanoptic.load_from_checkpoint( checkpoint_path, **model_kwargs, strict=False)
         print(cyan(f"Loaded weigths from {checkpoint_path}."))
     else:
-        model_wrapper = ModelWrapper(**model_kwargs)
-
+        model_wrapper = ModelWrapper_KDPanoptic(**model_kwargs)
+        
     data_module = DataModule(
         cfg.dataset,
         cfg.data_loader,
         step_tracker,
         global_rank=trainer.global_rank,
     )
-
+        
     if cfg.mode == "train":
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=(checkpoint_path if cfg.checkpointing.resume else None))
     else:
@@ -176,7 +179,7 @@ def train(cfg_dict: DictConfig):
             ckpt_path=checkpoint_path,
         )
 
-
+       
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     torch.set_float32_matmul_precision('high')
