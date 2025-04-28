@@ -50,6 +50,8 @@ checkpointing:
   # load: checkpoints/re10k.ckpt
   # load: outputs/2025-04-14/Mv_scratch(2025-04-15/11-40-04)/checkpoints/epoch_1017-step_87500.ckpt
   # load: outputs/2025-04-15/20-25-39/checkpoints/epoch_3488-step_300000.ckpt
+  load: outputs/2025-04-15/20-25-39/checkpoints/epoch_3488-step_300000.ckpt
+
   every_n_train_steps: 500  # 5000
   save_top_k: -1
   pretrained_model: null
@@ -70,7 +72,7 @@ test:
 seed: 111123
 
 trainer:
-  max_steps: 300000 #-1
+  max_steps: -1 #-1
   val_check_interval: 0.10
   gradient_clip_val: 0.5
   num_sanity_val_steps: 2

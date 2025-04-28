@@ -23,6 +23,7 @@ from .shims.crop_shim import apply_crop_shim
 from .types import Stage
 from .view_sampler import ViewSampler
 import random
+import numpy as np
 
 
 
@@ -35,16 +36,118 @@ import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.join(os.path.dirname(__file__), '..'), '..')))
 
+sequences = {
+    'train' : ['basketball','boxes','football','juggle'],
+    'test'  : ['softball','tennis'],
+    'val'  : ['softball','tennis']
+} 
 
 class PanopticViewSampler:
     def __init__(self, strategy, num_targets=4):
         self.strategy = strategy
         self.num_targets = num_targets
-        if strategy not in ['cam_proximity']:
+
+        if strategy not in ['cam_proximity','cam_proximity_with_syntetic_extrinsics']:
             raise ValueError(f"Unknown sampling strategy: {strategy}")
         
         if strategy == 'cam_proximity':
             self.sample = self.cam_proximity
+        if strategy == 'cam_proximity_with_syntetic_extrinsics':
+            self.sample = self.cam_proximity_with_syntetic_extrinsics
+            
+
+    def init_camera(self, y_angle=0., center_dist=2.4, cam_height=1.3, f_ratio=0.82):
+        """
+        Initialize a synthetic camera.
+
+        Args:
+            y_angle (float): Unused in this simple version (could be rotation later).
+            center_dist (float): Distance from origin along X axis.
+            cam_height (float): Height of camera in Y.
+            f_ratio (float): Normalized focal ratio (relative to image size).
+
+        Returns:
+            k (torch.Tensor): [1,3,3] Normalized intrinsic matrix.
+        """
+        
+
+        # Define normalized intrinsic
+        fx = f_ratio
+        fy = f_ratio
+        cx = 0.5
+        cy = 0.5
+
+        k = torch.tensor([
+            [fx, 0.0, cx],
+            [0.0, fy, cy],
+            [0.0, 0.0, 1.0]
+        ], dtype=torch.float32).unsqueeze(0)  # [1, 3, 3]
+
+        return k
+
+
+    def cam_proximity_with_syntetic_extrinsics(self, extrinsics, iteration=0, max_iterations=10000):
+        k = self.init_camera()
+        extrinsics = torch.tensor(extrinsics) if not isinstance(extrinsics, torch.Tensor) else extrinsics
+        num_views = extrinsics.shape[0]
+        cam_positions = extrinsics[:, :3, 3]
+
+        # Step 1: Randomly choose the first context camera
+        first_ctx = random.randint(0, num_views - 1)
+        dists_from_first = torch.norm(cam_positions - cam_positions[first_ctx], dim=1)
+        
+        # Step 2: Select the second context based on boundary
+        min_d, max_d = dists_from_first[dists_from_first > 0].min(), dists_from_first.max()
+        boundary = min_d + (max_d - min_d) * (iteration / max_iterations)
+
+        second_ctx = None
+        for idx in torch.argsort(dists_from_first):
+            if idx != first_ctx and dists_from_first[idx] >= boundary:
+                second_ctx = idx.item()
+                break
+        if second_ctx is None:
+            second_ctx = torch.argmax(dists_from_first).item()
+
+        context_idx = [first_ctx, second_ctx]
+
+        # Step 3: Sample synthetic extrinsics along the segment
+        pos1, pos2 = cam_positions[first_ctx], cam_positions[second_ctx]
+        direction = pos2 - pos1
+        synthetic_extrinsics = []
+        synthetic_count = 4
+        for i in range(synthetic_count):
+            t = i / (synthetic_count)
+            interp_position = (1 - t) * pos1 + t * pos2
+            mid_extrinsic = torch.eye(4)
+            mid_extrinsic[:3, 3] = interp_position
+            synthetic_extrinsics.append(mid_extrinsic)
+
+        # Step 4: Select one synthetic extrinsic as a target
+        synthetic_extrinsics = torch.stack(synthetic_extrinsics)
+        # synthetic_target_idx = random.randint(0, synthetic_extrinsics.shape[0] - 1)
+        # selected_target = synthetic_extrinsics[synthetic_target_idx].unsqueeze(0)
+
+        # Step 5: Use the same logic as cam_proximity to select real targets
+        segment = pos2 - pos1
+        seg_len_sq = segment.dot(segment)
+
+        vecs = cam_positions - pos1.unsqueeze(0)
+        t = (vecs @ segment) / seg_len_sq
+        t_clamped = torch.clamp(t, 0.0, 1.0).unsqueeze(1)
+        closest_pts = pos1.unsqueeze(0) + t_clamped * segment
+        dists_to_segment = torch.norm(cam_positions - closest_pts, dim=1)
+        dists_to_segment[context_idx] = float('inf')
+
+        sorted_indices = torch.argsort(dists_to_segment)
+        target_idx = sorted_indices[:self.num_targets].tolist()
+
+        return {
+                'context_indices': context_idx, 
+                'target_indices': target_idx, 
+                'ctx_boundary': boundary, 
+                'synthetic_extrinsics': synthetic_extrinsics,
+                'synthetic_intrinsics': k
+        }
 
     def cam_proximity(self, extrinsics, iteration=0, max_iterations=10000):
         """
@@ -130,10 +233,55 @@ class PanopticViewSampler:
         target_idx = sorted_indices[:self.num_targets].tolist()
 
 
-        return context_idx, target_idx, boundary
+        return {
+            'context_idx': context_idx,
+            'target_idx': target_idx,
+            'ctx_boundary': boundary
+        }
 
             
+def load_gaussians(path, stage):
+    gaussians = {}
+    folders = [name for name in os.listdir(path) if os.path.isdir(os.path.join(path, name))]
+    folders = [f for f in folder if f in sequences[stage]]
+    # file = dict(np.load(path))
+    print("Loading the precomputed gaussians")
+    for folder in folders:
+        gaussians[folder] = {}
+        file_path = os.path.join(path,f'{folder}/params.npz')
+        file = dict(np.load(file_path))
+        for key in list(file.keys()):
+            gaussians[folder][key] = file[key]
+        print(f"\tParameters for --> {folder} loaded")
+    
+    # Check for each scene that the number of gaussian is the same (example checking the first dimension of means3D)
+    # get the minumum and random sample the gaussian to have the same number of gaussians over all the scenes
+    # Find the minimum number of Gaussians across all scenes
+    min_g = min([gaussians[folder]['means3D'].shape[1] for folder in folders])
 
+    # Now, for each scene, randomly sample min_g Gaussians
+    for folder in folders:
+        num_gaussians = gaussians[folder]['means3D'].shape[1]
+        if num_gaussians != min_g:
+            # Generate random indices to sample
+            indices = np.random.permutation(num_gaussians)[:min_g]
+            
+            # sample random min_g gaussian over the dimension 1 of mean3d
+            gaussians[folder]['means3D'] = gaussians[folder]['means3D'][:,indices,:]
+            gaussians[folder]['rgb_colors'] = gaussians[folder]['rgb_colors'][:,indices,:]
+            gaussians[folder]['seg_colors'] = gaussians[folder]['seg_colors'][indices,:]
+            gaussians[folder]['unnorm_rotations'] = gaussians[folder]['unnorm_rotations'][:,indices,:]
+            gaussians[folder]['logit_opacities'] = gaussians[folder]['logit_opacities'][indices,:]
+            gaussians[folder]['log_scales'] = gaussians[folder]['log_scales'][indices,:]
+
+            # means3D has shape 150 gaussians 3
+            # rgb_colors 150 gaussians 3    
+            # seg_colors gaussian 3
+            # unnorm_rotations 150 gaussian 4
+            # logit_opacities gaussian 1
+            # log_scales gaussian 3
+            
+    return gaussians
 
 @dataclass
 class DatasetPanopticCfg(DatasetCfgCommon):
@@ -147,6 +295,7 @@ class DatasetPanopticCfg(DatasetCfgCommon):
     baseline_scale_bounds: bool = True
     shuffle_val: bool = True
     refinement: bool = False
+    
     
     
 
@@ -168,6 +317,11 @@ class DatasetPanoptic(IterableDataset):
         chunks: list[Path]
         self.near = 1.0
         self.far = 100.0
+        self.w = 256
+        self.h = 141
+        
+        # Create the refined gaussians dict 
+        self.refined_gaussians = load_gaussians(path=Path('datasets/panoptic_gaussian_parameters/Gaussian_KD_MVSPLAT'), stage=self.data_stage)
         
         # Collect chunks.
         self.chunks = []
@@ -187,7 +341,10 @@ class DatasetPanoptic(IterableDataset):
         print(f"Data length {self.data_length}")
         self.step_tracker = view_sampler.step_tracker
         self.global_step = self.step_tracker.get_step()
-        self.view_sampler = PanopticViewSampler(strategy='cam_proximity', num_targets=2)
+        # self.view_sampler = PanopticViewSampler(strategy='cam_proximity', num_targets=2)
+        self.view_sampler_strategy = 'cam_proximity_with_syntetic_extrinsics'
+        self.view_sampler = PanopticViewSampler(strategy=self.view_sampler_strategy, num_targets=2)
+        
         if self.stage == 'test':
             print('Test Panoptic...')
             
@@ -217,7 +374,12 @@ class DatasetPanoptic(IterableDataset):
                 for example in chunk:
                     extrinsics, intrinsics = self.convert_poses(example["cameras"])
                     scene = example['key']
-                    context_indices, target_indices, boundary = self.view_sampler.sample(extrinsics=extrinsics, iteration=self.global_step+1, max_iterations=300000)
+                    seq = scene.split('_')[0]
+                    timestep = int(scene.split('_')[-1])
+                    
+                    result = self.view_sampler.sample(extrinsics=extrinsics, iteration=self.global_step+1, max_iterations=300000)
+                    context_indices = result['context_indices']
+                    target_indices = result['target_indices']
                     
                     # context_indices = [9,4]
                     # target_indices = [18]
@@ -243,7 +405,15 @@ class DatasetPanoptic(IterableDataset):
                     
                     nf_scale = scale if self.cfg.baseline_scale_bounds else 1.0
                     
-                   
+                    ref = {
+                        'means3D': self.refined_gaussians[seq]['means3D'][timestep],
+                        'rotations': torch.nn.functional.normalize(torch.tensor(self.refined_gaussians[seq]['unnorm_rotations'][timestep])),
+                        # fixed values for different frames
+                        'opacities': torch.sigmoid(torch.tensor(self.refined_gaussians[seq]['logit_opacities'])), 
+                        'scales': torch.exp(torch.tensor(self.refined_gaussians[seq]['log_scales'])),
+                        'colors_precomp': self.refined_gaussians[seq]['rgb_colors'][timestep]
+                    }
+                    
                     # Construct the example
                     example = {
                             "context": {
@@ -263,8 +433,16 @@ class DatasetPanoptic(IterableDataset):
                             "index": target_indices,
                         },
                         "scene": scene,
-                        "ctx_boundary" : boundary
+                        'refined_gaussians': ref,
                     }
+                    
+                    # Trick to add all different info coming out from the sampling
+                    keys = list(result.keys())
+                    for key in keys:
+                        if key not in ['context_indices','target_indices']:
+                            example[key] = result[key]
+                    
+                    
                     
                     yield apply_crop_shim(example, tuple(self.cfg.image_shape))
         else:

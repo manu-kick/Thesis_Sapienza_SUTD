@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol, runtime_checkable
-
+from collections import defaultdict
+from .ply_export import export_ply
 # import moviepy.editor as mpy
 import torch
 import wandb
@@ -118,6 +119,10 @@ class ModelWrapper_KDPanoptic(LightningModule):
             Image.fromarray((im*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"outputs/debug_panoptic_kd/step_{self.global_step}.png")
         target_gt = batch["target"]["image"]
         
+       
+        # Expoprt the refined gauss
+        
+        
         # Compute metrics.
         psnr_probabilistic = compute_psnr(
             rearrange(target_gt, "b v c h w -> (b v) c h w"),
@@ -134,8 +139,6 @@ class ModelWrapper_KDPanoptic(LightningModule):
         self.log("loss/total", total_loss, sync_dist=True)
         
         
-        # Add the refinement component to the loss (MSE)
-        # Hack to match the same number of gaussian to represent the scene
         # 1. Get the number of Gaussians to sample
         gaussians_count = batch['refined_gaussians']['means3D'].shape[1]
         bs, gaussian_number, attr = gaussians.means.shape
@@ -144,25 +147,64 @@ class ModelWrapper_KDPanoptic(LightningModule):
         random_indices = torch.randint(0, gaussian_number, (bs, gaussians_count), device=gaussians.means.device)
         expanded_indices = random_indices.unsqueeze(-1).expand(-1, -1, attr)
         sampled_means = torch.gather(gaussians.means, dim=1, index=expanded_indices)
+        
+        # -------------------- EXPORTING ------------------
+        # Save the point cloud file to see the scene for both the refined gaussians and the 
+        export_ply(
+            batch['target']['extrinsics'][0][0],
+            means=gaussians.means[0],
+            scales=gaussians.scales[0],
+            rotations=gaussians.rotations[0],
+            harmonics=gaussians.harmonics[0],
+            opacities=gaussians.opacities[0],
+            path=Path(f"outputs/debug_panoptic_kd/MV_trained_pc_{self.global_step}.ply")
+        )
+        
+        # Expoprt the refined gauss
+        export_ply(
+            batch['target']['extrinsics'][0][0],
+            means=torch.tensor(batch['refined_gaussians']['means3D'][0]),
+            scales=torch.tensor(batch['refined_gaussians']['scales'][0]),
+            rotations=torch.tensor(batch['refined_gaussians']['rotations'][0]),
+            harmonics=gaussians.harmonics[0][0:batch['refined_gaussians']['rotations'][0].shape[0]], #just to make it not empty
+            opacities=torch.tensor(batch['refined_gaussians']['opacities'][0].squeeze(-1)),
+            path=Path(f"outputs/debug_panoptic_kd/REF_pc_{self.global_step}.ply")
+        )
+        # -------------------- EXPORTING ------------------
 
-        # 3. Perform greedy matching (find closest sampled Gaussian for each refined one)
-        greedy_indices = batched_greedy_match(sampled_means, batch['refined_gaussians']['means3D'])  # (bs, N)
+        # 3. Normalize using refined_gaussians bounds
+        refined_means = batch['refined_gaussians']['means3D']
+        scene_min = refined_means.amin(dim=1, keepdim=True)  # (bs, 1, 3)
+        scene_max = refined_means.amax(dim=1, keepdim=True)  # (bs, 1, 3)
+        scene_scale = (scene_max - scene_min).clamp(min=1e-6)
 
-        # 4. Expand indices and reorder all other attributes
-        # Apply greedy reordering to all attributes
+        sampled_means_norm = (sampled_means - scene_min) / scene_scale
+        refined_means_norm = (refined_means - scene_min) / scene_scale
+
+        # 4. Perform voxel-based matching
+        voxel_size = 0.05  # normalized units
+        print("Voxel based match")
+        greedy_indices = voxel_based_match(sampled_means_norm, refined_means_norm, voxel_size)
+
+        # 5. Expand indices and reorder all attributes
+        # Prepare all sampled attributes before gathering
+        sampled_opacities = torch.gather(gaussians.opacities, 1, random_indices.unsqueeze(-1).expand(-1, -1, 1))
+        sampled_scales = torch.gather(gaussians.scales, 1, random_indices.unsqueeze(-1).expand(-1, -1, gaussians.scales.shape[2]))
+        sampled_rotations = torch.gather(gaussians.rotations, 1, random_indices.unsqueeze(-1).expand(-1, -1, gaussians.rotations.shape[2]))
+
+        # Gather aligned attributes
         aligned_sampled_means = gather_by_indices(sampled_means, greedy_indices)
-        aligned_sampled_opacities = gather_by_indices(torch.gather(gaussians.opacities, 1,random_indices.unsqueeze(-1).expand(-1, -1, 1)), greedy_indices)
-        aligned_sampled_scales = gather_by_indices(torch.gather(gaussians.scales, 1, random_indices.unsqueeze(-1).expand(-1, -1, gaussians.scales.shape[2])), greedy_indices)
-        aligned_sampled_rotations = gather_by_indices(torch.gather(gaussians.rotations, 1, random_indices.unsqueeze(-1).expand(-1, -1, gaussians.rotations.shape[2])), greedy_indices)
+        aligned_sampled_opacities = gather_by_indices(sampled_opacities, greedy_indices)
+        aligned_sampled_scales = gather_by_indices(sampled_scales, greedy_indices)
+        aligned_sampled_rotations = gather_by_indices(sampled_rotations, greedy_indices)
 
-        # 5. Compute the MSE loss using the aligned tensors
-        mse_loss = ( # we skip the loss on the color because the prediction. has the harmonics coeff while the 
+        # 6. Compute the MSE loss using the aligned tensors
+        mse_loss = (
             F.mse_loss(batch['refined_gaussians']['means3D'], aligned_sampled_means) +
             F.mse_loss(batch['refined_gaussians']['opacities'], aligned_sampled_opacities) +
             F.mse_loss(batch['refined_gaussians']['scales'], aligned_sampled_scales) +
             F.mse_loss(batch['refined_gaussians']['rotations'], aligned_sampled_rotations)
         )
-
                 
         
         if (
@@ -793,8 +835,55 @@ def greedy_match(sampled, refined):
     return torch.stack(matched_indices, dim=0)  # (bs, N)
 
 
+
+
+# --- Utilities ---
+def compute_voxel_indices(points, voxel_size):
+    return (points / voxel_size).floor().int()
+
+def build_voxel_map(points, voxel_size):
+    bs, N, _ = points.shape
+    voxel_map = []
+
+    voxel_indices = compute_voxel_indices(points, voxel_size)  # (bs, N, 3)
+
+    for b in range(bs):
+        vmap = defaultdict(list)
+        for i in range(N):
+            key = tuple(voxel_indices[b, i].tolist())
+            vmap[key].append(i)
+        voxel_map.append(vmap)
+    return voxel_map
+
+def voxel_based_match(sampled, refined, voxel_size):
+    bs, N, _ = sampled.shape
+    matched_indices = []
+
+    voxel_map = build_voxel_map(refined, voxel_size)
+    sampled_voxel_indices = compute_voxel_indices(sampled, voxel_size)
+
+    
+    for b in range(bs):
+        ref_points = refined[b]  # (N_r, 3)
+        indices = []
+        for i in range(N):
+            voxel = tuple(sampled_voxel_indices[b, i].tolist())
+            candidates = voxel_map[b].get(voxel, [])
+
+            if candidates:
+                dists = torch.norm(ref_points[candidates] - sampled[b, i], dim=1)
+                min_idx = candidates[torch.argmin(dists)]
+            else:
+                # fallback: pick random or use a dummy (e.g. zero) index
+                min_idx = torch.randint(0, ref_points.shape[0], (1,), device=sampled.device).item()
+            indices.append(min_idx)
+
+        matched_indices.append(torch.tensor(indices, device=sampled.device))
+        print(f"\tBatch {b} match done")
+
+    return torch.stack(matched_indices, dim=0)  # (bs, N)
+
 def gather_by_indices(tensor, indices):
-    # tensor: (bs, N, C), indices: (bs, N)
     bs, N, C = tensor.shape
-    expanded = indices.unsqueeze(-1).expand(-1, -1, C)  # (bs, N, C)
+    expanded = indices.unsqueeze(-1).expand(-1, -1, C)
     return torch.gather(tensor, dim=1, index=expanded)

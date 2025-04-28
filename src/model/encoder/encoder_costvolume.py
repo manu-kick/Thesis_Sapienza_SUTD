@@ -250,7 +250,8 @@ class EncoderCostVolume(Encoder[EncoderCostVolumeCfg]):
             ),
             rearrange( gaussians.rotations,
                 "b v r srf spp xyzw -> b (v r srf spp) xyzw" 
-            )
+            ),
+            colors_precomp=None
         )
 
     def get_data_shim(self) -> DataShim:
