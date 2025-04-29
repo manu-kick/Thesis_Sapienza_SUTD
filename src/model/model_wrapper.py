@@ -129,46 +129,24 @@ class ModelWrapper(LightningModule):
         b, _, _, h, w = batch["target"]["image"].shape # panoptic => h=352 w=640, re10k h=256 w=256
 
         # Run the model.
-        gaussians = self.encoder(
-            batch["context"], self.global_step, False, scene_names=batch["scene"]
-        )
+        # gaussians = self.encoder(
+        #     batch["context"], self.global_step, False, scene_names=batch["scene"]
+        # )
         
-        output = self.decoder.forward(
-            gaussians,
-            batch["target"]["extrinsics"],
-            batch["target"]["intrinsics"],
-            batch["target"]["near"],
-            batch["target"]["far"],
-            (h, w),
-            depth_mode=self.train_cfg.depth_mode,
-        )
-        print("First Output GONE")
+        # output = self.decoder.forward(
+        #     gaussians,
+        #     batch["target"]["extrinsics"],
+        #     batch["target"]["intrinsics"],
+        #     batch["target"]["near"],
+        #     batch["target"]["far"],
+        #     (h, w),
+        #     depth_mode=self.train_cfg.depth_mode,
+        # )
         
+        # Generate the syntetic rendered images
         count_intr_synt = batch["synthetic_intrinsics"].shape[1]
         synthetic_count = batch["synthetic_extrinsics"].shape[1]
         intr_shape = 3
-        
-        
-        # output_synthetic = self.decoder.forward(
-        #     Gaussians(
-        #         means=batch['refined_gaussians']['means3D'],
-        #         rotations=batch['refined_gaussians']['rotations'],
-        #         scales=batch['refined_gaussians']['scales'],
-        #         opacities=batch['refined_gaussians']['opacities'].squeeze(-1),
-        #         colors_precomp = batch['refined_gaussians']['colors_precomp'],
-        #         covariances=None,
-        #         harmonics=None
-        #     ),
-        #     batch["synthetic_extrinsics"],
-        #     repeat(batch['synthetic_intrinsics'],'b 1 s v -> b p s v', p=synthetic_count, s=intr_shape, v=intr_shape),
-        #     repeat(batch['target']['near'][:,0].unsqueeze(-1),'b 1 -> b p', p=synthetic_count),
-        #     repeat(batch['target']['far'][:,0].unsqueeze(-1),'b 1 -> b p', p=synthetic_count),
-        #     (h, w),
-        #     depth_mode=self.train_cfg.depth_mode,
-        #     use_sh = False, #use the colors precomputed instead
-        #     use_scale_and_rotation = True
-        # )
-        
         output_synthetic = self.decoder.forward(
             Gaussians(
                 means=batch['refined_gaussians']['means3D'],
@@ -179,26 +157,51 @@ class ModelWrapper(LightningModule):
                 covariances=None,
                 harmonics=None
             ),
-            batch["target"]["extrinsics"],
-            # batch["target"]["intrinsics"],
+            batch['synthetic_extrinsics'],
             # repeat(batch['synthetic_intrinsics'],'b 1 s v -> b p s v', p=batch['target']['intrinsics'].shape[1], s=intr_shape, v=intr_shape),
-            repeat(batch["target"]["intrinsics"][0][0].unsqueeze(0).unsqueeze(0),'1 1 s v -> b p s v', p=batch['target']['intrinsics'].shape[1], b=batch['target']['intrinsics'].shape[0],s=intr_shape, v=intr_shape),
-            batch["target"]["near"],
-            batch["target"]["far"],
+            repeat(batch["context"]["intrinsics"][0][0].unsqueeze(0).unsqueeze(0),'1 1 s v -> b p s v', p=synthetic_count, b=batch['target']['intrinsics'].shape[0],s=intr_shape, v=intr_shape),
+            repeat(batch['target']['near'][:,0].unsqueeze(-1),'b 1 -> b p', p=synthetic_count),
+            repeat(batch['target']['far'][:,0].unsqueeze(-1),'b 1 -> b p', p=synthetic_count),
             (h, w),
             depth_mode=self.train_cfg.depth_mode,
             use_sh = False, #use the colors precomputed instead
             use_scale_and_rotation = True
         )
         
+        # Construct the input to the model
+        input_is_context = any(batch['use_second_ctx']==True) 
+        model_input = {
+            'extrinsics': batch["context"]['extrinsics'] if input_is_context else torch.stack([batch['context']['extrinsics'][:,0,:,:].unsqueeze(1), batch['synthetic_extrinsics']],dim=1).squeeze(2),                
+            'intrinsics': batch["context"]['intrinsics'],                
+            'image': batch["context"]['image'] if input_is_context else torch.stack([batch['context']['image'][:,0,:,:,:], output_synthetic.color[:,0,:,:,:]],dim=1),                
+            'near': batch["context"]['near'],                
+            'far': batch["context"]['far'],                
+            'index': batch["context"]['index'] if input_is_context else [batch["context"]['index'][0],batch['synthetic_extrinsic_idx']],                
+        }
+        
+        
+        gaussians = self.encoder(
+            model_input, self.global_step, False, scene_names=batch["scene"]
+        )
+        output = self.decoder.forward(
+            gaussians,
+            batch["target"]["extrinsics"],
+            batch["target"]["intrinsics"],
+            batch["target"]["near"],
+            batch["target"]["far"],
+            (h, w),
+            depth_mode=self.train_cfg.depth_mode,
+        )
+        
         if self.global_step % 3000 == 0:
             im = output.color[0][0]
             Image.fromarray((im*255).cpu().detach().numpy().astype(np.uint8).transpose(1, 2, 0)).save(f"outputs/debug_panoptic_synth/step_{self.global_step}.png")
-            index_context_label = [batch["context"]["index"][0][0].item(),batch["context"]["index"][1][0].item()]
-            index_target_label = [batch['target']['index'][0][0].item(),batch['target']['index'][1][0].item()]
+            additional_context_label = '_synt' if input_is_context else ""
+            index_context_label = [model_input["index"][0][0].item(), f"{model_input['index'][1][0].item()}{additional_context_label}" ]
+            index_target_label = [batch['target']['index'][0][0].item(), batch['target']['index'][1][0].item()]
             
             comparison = hcat(
-                add_label(vcat(*batch['context']['image'][0]),f'Context: {index_context_label}, boundary: {round(batch["ctx_boundary"][0].item(),2)}'),
+                add_label(vcat(*batch['context']['image'][0]),f'Input: {index_context_label}, boundary: {round(batch["ctx_boundary"][0].item(),2)}'),
                 add_label(vcat(*batch['target']['image'][0]),f'Target {index_target_label}'),
                 add_label(vcat(*output.color[0]),'Target Decoded'),
                 add_label(vcat(*output_synthetic.color[0]),'Synthetic cameras'),

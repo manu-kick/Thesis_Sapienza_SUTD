@@ -30,8 +30,8 @@ wandb:
   project: MV_Thesis_panoptic
   entity: rucci-2053183
   name: Mv_scratch_Synthetic
-  mode: disabled #online
-  id: null #fgst5k9k
+  mode: online #online
+  id: null 
 
 mode: train #  here train means knowledge distillation 
 enable_refinement: false
@@ -69,7 +69,7 @@ checkpointing:
   # load: checkpoints/re10k.ckpt
   # load: outputs/2025-04-14/Mv_scratch(2025-04-15/11-40-04)/checkpoints/epoch_1017-step_87500.ckpt
   # load: outputs/2025-04-15/20-25-39/checkpoints/epoch_3488-step_300000.ckpt
-  every_n_train_steps: 500  # 5000
+  every_n_train_steps: 5000  # 5000
   save_top_k: -1
   pretrained_model: null
   resume: true

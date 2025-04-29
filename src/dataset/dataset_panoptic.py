@@ -42,6 +42,8 @@ sequences = {
     'val'  : ['softball','tennis']
 } 
 
+
+
 class PanopticViewSampler:
     def __init__(self, strategy, num_targets=4):
         self.strategy = strategy
@@ -113,12 +115,20 @@ class PanopticViewSampler:
         # Step 3: Sample synthetic extrinsics along the segment
         pos1, pos2 = cam_positions[first_ctx], cam_positions[second_ctx]
         direction = pos2 - pos1
+        rot1 = extrinsics[first_ctx][:3, :3]
+        rot2 = extrinsics[second_ctx][:3, :3]
+        q1 = rotation_matrix_to_quaternion(rot1)
+        q2 = rotation_matrix_to_quaternion(rot2)
+        
         synthetic_extrinsics = []
-        synthetic_count = 4
-        for i in range(synthetic_count):
+        synthetic_count = 20
+        for i in range(1,synthetic_count):
             t = i / (synthetic_count)
             interp_position = (1 - t) * pos1 + t * pos2
+            q_interp = slerp(q1, q2, t)
+            rot_interp = quaternion_to_rotation_matrix(q_interp)
             mid_extrinsic = torch.eye(4)
+            mid_extrinsic[:3, :3] = rot_interp
             mid_extrinsic[:3, 3] = interp_position
             synthetic_extrinsics.append(mid_extrinsic)
 
@@ -127,8 +137,32 @@ class PanopticViewSampler:
         # synthetic_target_idx = random.randint(0, synthetic_extrinsics.shape[0] - 1)
         # selected_target = synthetic_extrinsics[synthetic_target_idx].unsqueeze(0)
 
+        # Step 4.1: Select only one syntetic extrinsinc choosing one index from the syntetic extrinsix stacked, choose it basedon the current iteration
+        # when the iteration is at the start, choos the first, when is at the at choose the last.
+        # Considering as the total number of available extrinsics, the syntehtic + the other context
+        # Also return a flag into the dict that is a signal that, can be used the other context if the iteration in the last bin of iters (the one dedicated to the other context) 
+        # TODO
+        # Step 4.1: Select one synthetic extrinsic based on iteration progress
+        total_extrinsics = synthetic_extrinsics.shape[0] + 1  # synthetic + second context
+        # Map iteration to index range [0, total_extrinsics - 1]
+        extrinsic_idx = int((iteration / max_iterations) * (total_extrinsics - 1))
+        extrinsic_idx = min(extrinsic_idx, synthetic_extrinsics.shape[0])  # cap to max synthetic index
+
+        if extrinsic_idx == synthetic_extrinsics.shape[0]:
+            # Final step: use the second context camera itself
+            synthetic_extrinsics = extrinsics[second_ctx].unsqueeze(0)
+            use_second_ctx = True
+        else:
+            synthetic_extrinsics = synthetic_extrinsics[extrinsic_idx].unsqueeze(0)
+            use_second_ctx = False
+        
         # Step 5: Use the same logic as cam_proximity to select real targets
-        segment = pos2 - pos1
+        if use_second_ctx:
+            seg_end = pos2
+        else:
+            seg_end = synthetic_extrinsics[0, :3, 3]
+
+        segment = seg_end - pos1
         seg_len_sq = segment.dot(segment)
 
         vecs = cam_positions - pos1.unsqueeze(0)
@@ -136,17 +170,21 @@ class PanopticViewSampler:
         t_clamped = torch.clamp(t, 0.0, 1.0).unsqueeze(1)
         closest_pts = pos1.unsqueeze(0) + t_clamped * segment
         dists_to_segment = torch.norm(cam_positions - closest_pts, dim=1)
-        dists_to_segment[context_idx] = float('inf')
+        # dists_to_segment[context_idx] = float('inf')  # exclude context views
+        dists_to_segment[torch.tensor(context_idx, device=dists_to_segment.device)] = float('inf')
 
         sorted_indices = torch.argsort(dists_to_segment)
         target_idx = sorted_indices[:self.num_targets].tolist()
+
 
         return {
                 'context_indices': context_idx, 
                 'target_indices': target_idx, 
                 'ctx_boundary': boundary, 
                 'synthetic_extrinsics': synthetic_extrinsics,
-                'synthetic_intrinsics': k
+                'synthetic_intrinsics': k, #not used
+                'use_second_ctx': use_second_ctx,
+                'synthetic_extrinsic_idx' : extrinsic_idx
         }
 
     def cam_proximity(self, extrinsics, iteration=0, max_iterations=10000):
@@ -164,7 +202,6 @@ class PanopticViewSampler:
         """
         extrinsics = torch.tensor(extrinsics) if not isinstance(extrinsics, torch.Tensor) else extrinsics
         num_views = extrinsics.shape[0]
-
         cam_positions = extrinsics[:, :3, 3]  # [N, 3]
 
         # Compute pairwise distances
@@ -243,7 +280,7 @@ class PanopticViewSampler:
 def load_gaussians(path, stage):
     gaussians = {}
     folders = [name for name in os.listdir(path) if os.path.isdir(os.path.join(path, name))]
-    folders = [f for f in folder if f in sequences[stage]]
+    folders = [f for f in folders if f in sequences[stage]]
     # file = dict(np.load(path))
     print("Loading the precomputed gaussians")
     for folder in folders:
@@ -318,7 +355,7 @@ class DatasetPanoptic(IterableDataset):
         self.near = 1.0
         self.far = 100.0
         self.w = 256
-        self.h = 141
+        self.h = 144
         
         # Create the refined gaussians dict 
         self.refined_gaussians = load_gaussians(path=Path('datasets/panoptic_gaussian_parameters/Gaussian_KD_MVSPLAT'), stage=self.data_stage)
@@ -545,4 +582,102 @@ class DatasetPanoptic(IterableDataset):
     
     def __len__(self) -> int:
         return self.data_length
-        
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+def rotation_matrix_to_quaternion(R):
+    """
+    Convert rotation matrix to quaternion (w, x, y, z).
+    Input: [3,3] tensor
+    Output: [4] tensor
+    """
+    m = R
+    t = m.trace()
+    if t > 0.0:
+        s = torch.sqrt(t + 1.0) * 2
+        w = 0.25 * s
+        x = (m[2, 1] - m[1, 2]) / s
+        y = (m[0, 2] - m[2, 0]) / s
+        z = (m[1, 0] - m[0, 1]) / s
+    else:
+        if (m[0, 0] > m[1, 1]) and (m[0, 0] > m[2, 2]):
+            s = torch.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
+            w = (m[2, 1] - m[1, 2]) / s
+            x = 0.25 * s
+            y = (m[0, 1] + m[1, 0]) / s
+            z = (m[0, 2] + m[2, 0]) / s
+        elif m[1, 1] > m[2, 2]:
+            s = torch.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
+            w = (m[0, 2] - m[2, 0]) / s
+            x = (m[0, 1] + m[1, 0]) / s
+            y = 0.25 * s
+            z = (m[1, 2] + m[2, 1]) / s
+        else:
+            s = torch.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
+            w = (m[1, 0] - m[0, 1]) / s
+            x = (m[0, 2] + m[2, 0]) / s
+            y = (m[1, 2] + m[2, 1]) / s
+            z = 0.25 * s
+    return torch.tensor([w, x, y, z], dtype=torch.float32)
+
+def slerp(q0, q1, t):
+    """
+    Spherical linear interpolation between two quaternions.
+    Args:
+        q0 (Tensor): (4,)
+        q1 (Tensor): (4,)
+        t (float): interpolation factor [0,1]
+    Returns:
+        Tensor: interpolated quaternion (4,)
+    """
+    q0 = q0 / q0.norm()
+    q1 = q1 / q1.norm()
+
+    dot = (q0 * q1).sum()
+
+    # If dot product is negative, invert one quaternion to take the shorter path
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+
+    DOT_THRESHOLD = 0.9995
+    if dot > DOT_THRESHOLD:
+        # Quaternions are very close, use linear interpolation
+        result = q0 + t*(q1 - q0)
+        return result / result.norm()
+
+    theta_0 = torch.acos(dot)         # angle between input quaternions
+    theta = theta_0 * t               # angle at interpolation
+
+    sin_theta = torch.sin(theta)
+    sin_theta_0 = torch.sin(theta_0)
+
+    s0 = torch.cos(theta) - dot * sin_theta / sin_theta_0
+    s1 = sin_theta / sin_theta_0
+
+    return (s0 * q0) + (s1 * q1)
+     
+def quaternion_to_rotation_matrix(q):
+    """
+    Convert quaternion (w, x, y, z) to rotation matrix (3x3).
+    """
+    w, x, y, z = q
+    R = torch.tensor([
+        [1 - 2*(y**2 + z**2), 2*(x*y - z*w),     2*(x*z + y*w)],
+        [2*(x*y + z*w),     1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
+        [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x**2 + y**2)]
+    ], dtype=torch.float32)
+    return R
